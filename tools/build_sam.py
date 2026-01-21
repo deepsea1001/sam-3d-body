@@ -6,7 +6,14 @@ from PIL import Image
 
 
 class HumanSegmentor:
-    def __init__(self, name="sam2", device="cuda", **kwargs):
+    def __init__(self, name="sam2", device=None, **kwargs):
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.device = device
 
         if name == "sam2":
@@ -49,7 +56,13 @@ def load_sam3(device, path):
 
 
 def run_sam2(sam_predictor, img, boxes):
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+    device_type = "cuda" if "cuda" in str(sam_predictor.device) else "cpu"
+    if device_type == "cpu" and torch.backends.mps.is_available():
+        # torch.autocast doesn't support "mps" as a device type string in all versions, 
+        # often "cpu" is used or it's skipped for MPS.
+        pass 
+
+    with torch.autocast(device_type=device_type, enabled=(device_type=="cuda"), dtype=torch.bfloat16):
         sam_predictor.set_image(img)
         all_masks, all_scores = [], []
         for i in range(boxes.shape[0]):

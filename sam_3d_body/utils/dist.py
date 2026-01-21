@@ -264,6 +264,8 @@ def get_comm_device(group: Optional[ProcessGroup] = None) -> torch.device:
         return torch.device("npu", torch.npu.current_device())
     elif backend == torch_dist.Backend.NCCL:
         return torch.device("cuda", torch.cuda.current_device())
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
     elif backend == "cncl":
         import torch_mlu  # noqa: F401
 

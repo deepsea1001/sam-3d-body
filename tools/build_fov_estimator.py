@@ -4,7 +4,14 @@ import torch
 
 
 class FOVEstimator:
-    def __init__(self, name="moge2", device="cuda", **kwargs):
+    def __init__(self, name="moge2", device=None, **kwargs):
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.device = device
 
         if name == "moge2":

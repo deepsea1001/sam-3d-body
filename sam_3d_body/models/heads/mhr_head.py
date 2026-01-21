@@ -105,19 +105,39 @@ class MHRHead(nn.Module):
         )
 
         # Load MHR itself
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+
+        # Fallback for MPS: mhr module requires float64 which is not supported on MPS.
+        mhr_device = torch.device("cpu") if device.type == "mps" else device
+        self.mhr_device = mhr_device
+
         if MOMENTUM_ENABLED:
             self.mhr = MHR.from_files(
-                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                device=mhr_device,
                 lod=1,
             )
         else:
             self.mhr = torch.jit.load(
                 mhr_model_path,
-                map_location=("cuda" if torch.cuda.is_available() else "cpu"),
+                map_location=mhr_device,
             )
 
         for param in self.mhr.parameters():
             param.requires_grad = False
+
+    def _apply(self, fn):
+        # Call the standard apply first
+        super()._apply(fn)
+        # If we are on MPS, ensure the mhr submodule stays on CPU
+        # This is because mhr requires float64 which MPS doesn't support
+        if self.mhr_device.type == "cpu":
+            self.mhr.to("cpu")
+        return self
 
     def get_zero_pose_init(self, factor=1.0):
         # Initialize pose token with zero-initialized learnable params
@@ -224,9 +244,19 @@ class MHRHead(nn.Module):
             # Zero out non-hand parameters
             model_params[:, self.nonhand_param_idxs] = 0
 
-        curr_skinned_verts, curr_skel_state = self.mhr(
-            shape_params, model_params, expr_params
-        )
+        if self.mhr_device.type == "cpu":
+            # Running MHR on CPU
+            curr_skinned_verts, curr_skel_state = self.mhr(
+                shape_params.to("cpu"), 
+                model_params.to("cpu"), 
+                expr_params.to("cpu") if expr_params is not None else None
+            )
+            curr_skinned_verts = curr_skinned_verts.to(model_params.device)
+            curr_skel_state = curr_skel_state.to(model_params.device)
+        else:
+            curr_skinned_verts, curr_skel_state = self.mhr(
+                shape_params, model_params, expr_params
+            )
         curr_joint_coords, curr_joint_quats, _ = torch.split(
             curr_skel_state, [3, 4, 1], dim=2
         )
