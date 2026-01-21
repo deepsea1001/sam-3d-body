@@ -28,7 +28,7 @@ class HumanSegmentor:
             raise NotImplementedError
     
     def run_sam(self, img, boxes, **kwargs):
-        return self.sam_func(self.sam, img, boxes)
+        return self.sam_func(self.sam, img, boxes, **kwargs)
         
 
 def load_sam2(device, path):
@@ -51,11 +51,11 @@ def load_sam3(device, path):
     from sam3.model.sam3_image_processor import Sam3Processor
     
     model = build_sam3_image_model()
-    predictor = Sam3Processor(model)
+    predictor = Sam3Processor(model, confidence_threshold=0.0)
     return predictor
 
 
-def run_sam2(sam_predictor, img, boxes):
+def run_sam2(sam_predictor, img, boxes, **kwargs):
     device_type = "cuda" if "cuda" in str(sam_predictor.device) else "cpu"
     if device_type == "cpu" and torch.backends.mps.is_available():
         # torch.autocast doesn't support "mps" as a device type string in all versions, 
@@ -90,17 +90,18 @@ def run_sam2(sam_predictor, img, boxes):
     return all_masks, all_scores
 
 
-def run_sam3(sam_predictor, img, boxes):
+def run_sam3(sam_predictor, img, boxes, det_prompt=None, **kwargs):
     # switch bgr to rgb 
     img = img[:, :, ::-1].copy()
     img = Image.fromarray(img.astype('uint8'), 'RGB')
     inference_state = sam_predictor.set_image(img)
-    # Prompt the model with text
-    output = sam_predictor.set_text_prompt(state=inference_state, prompt="person")
+    # Prompt the model with text - broaden for better recall
+    prompt = det_prompt if det_prompt is not None else "person"
+    output = sam_predictor.set_text_prompt(state=inference_state, prompt=prompt)
 
     # Get the masks, bounding boxes, and scores
     masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
-    score_threshold = 0.5
+    score_threshold = 0.3
     confident_idx = scores > score_threshold
     masks = masks[confident_idx].float().squeeze(1).cpu().numpy()
     scores = scores[confident_idx].cpu().numpy()

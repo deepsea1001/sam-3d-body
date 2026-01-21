@@ -26,6 +26,13 @@ def recursive_to(x: Any, target: torch.device):
         if target == "numpy":
             return x.numpy()
         else:
+            # MPS does not support float64. Cast to float32 if target is MPS.
+            if x.dtype == torch.float64:
+                # Check if target is 'mps' or a device object of type 'mps'
+                is_mps = (isinstance(target, str) and "mps" in target) or \
+                         (isinstance(target, torch.device) and target.type == "mps")
+                if is_mps:
+                    x = x.float()
             return x.to(target)
     elif isinstance(x, list):
         return [recursive_to(i, target) for i in x]

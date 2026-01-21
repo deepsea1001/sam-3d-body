@@ -96,6 +96,10 @@ def visualize_sample_together(img_cv2, outputs, faces):
     img_keypoints = img_cv2.copy()
     img_mesh = img_cv2.copy()
 
+    if len(outputs) == 0:
+        # Return a concatenated image showing the original image 4 times
+        return np.concatenate([img_cv2, img_cv2, img_cv2, img_cv2], axis=1)
+
     # First, sort by depth, furthest to closest
     all_depths = np.stack([tmp['pred_cam_t'] for tmp in outputs], axis=0)[:, 2]
     outputs_sorted = [outputs[idx] for idx in np.argsort(-all_depths)]
@@ -151,3 +155,53 @@ def visualize_sample_together(img_cv2, outputs, faces):
     cur_img = np.concatenate([img_cv2, img_keypoints, img_mesh, img_mesh_side], axis=1)
 
     return cur_img
+
+
+def visualize_debug_detections(img_cv2, outputs):
+    """
+    Visualize SAM3 detections (bboxes and masks) for debugging.
+    """
+    debug_img = img_cv2.copy()
+    overlay = img_cv2.copy()
+
+    for pid, person_output in enumerate(outputs):
+        bbox = person_output["bbox"]
+        score = person_output.get("det_score", 0.0)
+        bbox_score = person_output.get("bbox_score", score)
+        mask = person_output.get("mask")
+
+        # Draw mask
+        if mask is not None:
+            # Mask is [H, W, 1] usually or [H, W]
+            mask_bool = mask.squeeze() > 0
+            color = np.random.randint(0, 255, (3,)).tolist()
+            overlay[mask_bool] = color
+            
+        # Draw bbox
+        cv2.rectangle(
+            debug_img,
+            (int(bbox[0]), int(bbox[1])),
+            (int(bbox[2]), int(bbox[3])),
+            (0, 255, 0),
+            2,
+        )
+        
+        # Draw score
+        label = f"ID:{pid} Det:{bbox_score:.2f}"
+        if "mask_score" in person_output and person_output["mask_score"] is not None:
+             label += f" Mask:{person_output['mask_score']:.2f}"
+        cv2.putText(
+            debug_img,
+            label,
+            (int(bbox[0]), int(bbox[1]) - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+        )
+
+    # Blend overlay for masks
+    alpha = 0.4
+    debug_img = cv2.addWeighted(overlay, alpha, debug_img, 1 - alpha, 0)
+    
+    return debug_img

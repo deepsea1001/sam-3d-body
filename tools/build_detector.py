@@ -38,19 +38,21 @@ class HumanDetector:
         else:
             raise NotImplementedError
         
-    def sam3_run(self, img, det_cat_id: int = 0, bbox_thr: float = 0.5, **kwargs):
+    def sam3_run(self, img, det_cat_id: int = 0, bbox_thr: float = 0.3, det_prompt: str = None, **kwargs):
         # switch bgr to rgb 
         img = img[:, :, ::-1].copy()
         img = Image.fromarray(img.astype('uint8'), 'RGB')
         inference_state = self.processor.set_image(img)
         # Prompt the model with text
-        output = self.processor.set_text_prompt(state=inference_state, prompt="person")
+        prompt = det_prompt if det_prompt is not None else "person"
+        output = self.processor.set_text_prompt(state=inference_state, prompt=prompt)
 
         # Get the masks, bounding boxes, and scores
         masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
         
         confident_idx = scores > bbox_thr
         boxes = boxes[confident_idx].cpu().numpy()
+        scores = scores[confident_idx].cpu().numpy()
         
         # resize the box with a scale factor 1.2
         scale = 1.2
@@ -66,10 +68,10 @@ class HumanDetector:
             new_x2 = cx + w / 2
             new_y2 = cy + h / 2
             enlarged_boxes.append([new_x1, new_y1, new_x2, new_y2])
-        return np.array(enlarged_boxes)
+        return np.array(enlarged_boxes), scores
 
-    def run_human_detection(self, img, **kwargs):
-        return self.detector_func(self.detector, img, **kwargs)
+    def run_human_detection(self, img, det_prompt: str = None, **kwargs):
+        return self.detector_func(self.detector, img, det_prompt=det_prompt, **kwargs)
 
 
 def load_detectron2_vitdet(path=""):
@@ -111,6 +113,7 @@ def run_detectron2_vitdet(
     bbox_thr: float = 0.5,
     nms_thr: float = 0.3,
     default_to_full_image: bool = True,
+    **kwargs,
 ):
     import detectron2.data.transforms as T
 
@@ -133,12 +136,15 @@ def run_detectron2_vitdet(
     )
     if valid_idx.sum() == 0 and default_to_full_image:
         boxes = np.array([0, 0, width, height]).reshape(1, 4)
+        scores = np.array([1.0])
     else:
         boxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+        scores = det_instances.scores[valid_idx].cpu().numpy()
 
     # Sort boxes to keep a consistent output order
     sorted_indices = np.lexsort(
         (boxes[:, 3], boxes[:, 2], boxes[:, 1], boxes[:, 0])
     )  # shape: [len(boxes),]
     boxes = boxes[sorted_indices]
-    return boxes
+    scores = scores[sorted_indices]
+    return boxes, scores

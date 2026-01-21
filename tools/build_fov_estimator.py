@@ -77,6 +77,7 @@ def denormalize_f(norm_K, height, width):
 
     # Construct absolute K matrix
     abs_K = torch.tensor(
-        [[fx_abs, s_abs, cx_abs], [0.0, fy_abs, cy_abs], [0.0, 0.0, 1.0]]
+        [[fx_abs, s_abs, cx_abs], [0.0, fy_abs, cy_abs], [0.0, 0.0, 1.0]],
+        dtype=torch.float32
     )
     return abs_K

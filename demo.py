@@ -11,12 +11,12 @@ root = pyrootutils.setup_root(
     pythonpath=True,
     dotenv=True,
 )
-
+import time
 import cv2
 import numpy as np
 import torch
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
-from tools.vis_utils import visualize_sample, visualize_sample_together
+from tools.vis_utils import visualize_sample, visualize_sample_together, visualize_debug_detections
 from tqdm import tqdm
 
 
@@ -91,12 +91,23 @@ def main(args):
         ]
     )
 
-    for image_path in tqdm(images_list):
+    pbar = tqdm(images_list)
+    for image_path in pbar:
+        pbar.set_description(f"Processing {os.path.basename(image_path)}")
+        start_time = time.time()
+            
         outputs = estimator.process_one_image(
             image_path,
             bbox_thr=args.bbox_thresh,
             use_mask=args.use_mask,
+            det_prompt=args.det_prompt,
         )
+        
+        duration = time.time() - start_time
+        pbar.set_postfix(time=f"{duration:.2f}s")
+
+        if args.debug:
+            tqdm.write(f"[DEBUG] {os.path.basename(image_path)}: {duration:.3f}s, found {len(outputs)} humans")
 
         img = cv2.imread(image_path)
         rend_img = visualize_sample_together(img, outputs, estimator.faces)
@@ -104,6 +115,13 @@ def main(args):
             f"{output_folder}/{os.path.basename(image_path)[:-4]}.jpg",
             rend_img.astype(np.uint8),
         )
+
+        if args.debug:
+            debug_img = visualize_debug_detections(img, outputs)
+            cv2.imwrite(
+                f"{output_folder}/{os.path.basename(image_path)[:-4]}_debug.jpg",
+                debug_img.astype(np.uint8),
+            )
 
 
 if __name__ == "__main__":
@@ -183,7 +201,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--bbox_thresh",
-        default=0.8,
+        default=0.3,
         type=float,
         help="Bounding box detection threshold",
     )
@@ -192,6 +210,18 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Visualize bboxes and masks for debugging",
+    )
+    parser.add_argument(
+        "--det_prompt",
+        type=str,
+        default="person",
+        help="Text prompt for human detection (e.g. 'person')",
     )
     args = parser.parse_args()
 

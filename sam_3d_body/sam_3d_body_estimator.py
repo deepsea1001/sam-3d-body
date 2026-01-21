@@ -71,6 +71,7 @@ class SAM3DBodyEstimator:
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
         use_mask: bool = False,
+        det_prompt: Optional[str] = None,
         inference_type: str = "full",
     ):
         """
@@ -115,17 +116,18 @@ class SAM3DBodyEstimator:
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 image_format = "bgr"
             print("Running object detector...")
-            boxes = self.detector.run_human_detection(
+            boxes, scores = self.detector.run_human_detection(
                 img,
-                det_cat_id=det_cat_id,
                 bbox_thr=bbox_thr,
-                nms_thr=nms_thr,
-                default_to_full_image=False,
+                det_prompt=det_prompt,
             )
-            print("Found boxes:", boxes)
+            print(f"Found {len(boxes)} boxes.")
+            for i, score in enumerate(scores):
+                print(f"  - Box {i}: confidence {score:.4f}")
             self.is_crop = True
         else:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
+            scores = np.array([1.0])
             self.is_crop = False
 
         # If there are no detected humans, don't run prediction
@@ -152,7 +154,10 @@ class SAM3DBodyEstimator:
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
             # Generate masks using SAM2
-            masks, masks_score = self.sam.run_sam(img, boxes)
+            masks, masks_score = self.sam.run_sam(img, boxes, det_prompt=det_prompt)
+            print(f"Generated {len(masks)} masks.")
+            for i, score in enumerate(masks_score):
+                print(f"  - Mask {i}: confidence {score:.4f}")
         else:
             masks, masks_score = None, None
 
@@ -212,6 +217,9 @@ class SAM3DBodyEstimator:
                     "shape_params": out["shape"][idx],
                     "expr_params": out["face"][idx],
                     "mask": masks[idx] if masks is not None else None,
+                    "bbox_score": scores[idx] if scores is not None else 1.0,
+                    "mask_score": masks_score[idx] if masks_score is not None else None,
+                    "det_score": masks_score[idx] if masks_score is not None else scores[idx] if scores is not None else 1.0,
                     "pred_joint_coords": out["pred_joint_coords"][idx],
                     "pred_global_rots": out["joint_global_rots"][idx],
                     "mhr_model_params": out["mhr_model_params"][idx],
