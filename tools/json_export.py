@@ -79,13 +79,13 @@ MHR70_BONES = [
     (61, 60, [0, 255, 0]),       # left_pinky chain
     (60, 59, [0, 255, 0]),
     (59, 58, [0, 255, 0]),
-    # Left hand palm: wrist -> thumb_first -> index_first -> middle_first -> ring_first -> pinky_first -> wrist
-    (62, 43, [200, 200, 200]),   # left_wrist -> left_thumb_first
-    (43, 47, [200, 200, 200]),   # left_thumb_first -> left_index_first
-    (47, 51, [200, 200, 200]),   # left_index_first -> left_middle_first
-    (51, 55, [200, 200, 200]),   # left_middle_first -> left_ring_first
-    (55, 59, [200, 200, 200]),   # left_ring_first -> left_pinky_first
-    (59, 62, [200, 200, 200]),   # left_pinky_first -> left_wrist
+    # Left hand palm: wrist -> thumb_third, then thumb_second -> index_third -> middle_third -> ring_third -> pinky_third -> wrist
+    (62, 45, [200, 200, 200]),   # left_wrist -> left_thumb_third
+    (44, 49, [200, 200, 200]),   # left_thumb_second -> left_index_third
+    (49, 53, [200, 200, 200]),   # left_index_third -> left_middle_third
+    (53, 57, [200, 200, 200]),   # left_middle_third -> left_ring_third
+    (57, 61, [200, 200, 200]),   # left_ring_third -> left_pinky_third
+    (61, 62, [200, 200, 200]),   # left_pinky_third -> left_wrist
     # Right hand - fingers (from third joint to tip)
     (24, 23, [255, 128, 0]),     # right_thumb: third -> second
     (23, 22, [255, 128, 0]),     # second -> first
@@ -102,13 +102,13 @@ MHR70_BONES = [
     (40, 39, [0, 255, 0]),       # right_pinky chain
     (39, 38, [0, 255, 0]),
     (38, 37, [0, 255, 0]),
-    # Right hand palm: wrist -> thumb_first -> index_first -> middle_first -> ring_first -> pinky_first -> wrist
-    (41, 22, [200, 200, 200]),   # right_wrist -> right_thumb_first
-    (22, 26, [200, 200, 200]),   # right_thumb_first -> right_index_first
-    (26, 30, [200, 200, 200]),   # right_index_first -> right_middle_first
-    (30, 34, [200, 200, 200]),   # right_middle_first -> right_ring_first
-    (34, 38, [200, 200, 200]),   # right_ring_first -> right_pinky_first
-    (38, 41, [200, 200, 200]),   # right_pinky_first -> right_wrist
+    # Right hand palm: wrist -> thumb_third, then thumb_second -> index_third -> middle_third -> ring_third -> pinky_third -> wrist
+    (41, 24, [200, 200, 200]),   # right_wrist -> right_thumb_third
+    (23, 28, [200, 200, 200]),   # right_thumb_second -> right_index_third
+    (28, 32, [200, 200, 200]),   # right_index_third -> right_middle_third
+    (32, 36, [200, 200, 200]),   # right_middle_third -> right_ring_third
+    (36, 40, [200, 200, 200]),   # right_ring_third -> right_pinky_third
+    (40, 41, [200, 200, 200]),   # right_pinky_third -> right_wrist
 ]
 
 

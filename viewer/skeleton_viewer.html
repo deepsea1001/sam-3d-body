@@ -324,6 +324,118 @@
                     skeletonGroup.add(joint);
                 }
 
+                // Helper to transform a keypoint
+                const transformPt = (kp) => new THREE.Vector3(
+                    (kp[0] - centerX) * scale,
+                    (kp[1] - minY) * scale,
+                    (kp[2] - centerZ) * scale
+                );
+
+                // Helper to check if keypoint is valid
+                const isValidKp = (kp) => kp && !(kp[0] === 0 && kp[1] === 0 && kp[2] === 0);
+
+                // Create foot polygons (transparent)
+                // Left foot: ankle(13), big_toe(15), small_toe(16), heel(17)
+                // Right foot: ankle(14), big_toe(18), small_toe(19), heel(20)
+                const footIndices = [
+                    { indices: [13, 15, 16, 17], color: [0, 255, 0] },      // left foot
+                    { indices: [14, 18, 19, 20], color: [255, 128, 0] }     // right foot
+                ];
+
+                for (const foot of footIndices) {
+                    const [ankleIdx, bigToeIdx, smallToeIdx, heelIdx] = foot.indices;
+                    const pts = [keypoints[ankleIdx], keypoints[bigToeIdx], keypoints[smallToeIdx], keypoints[heelIdx]];
+
+                    if (!pts.every(isValidKp)) continue;
+
+                    const [ankle, bigToe, smallToe, heel] = pts.map(transformPt);
+
+                    const geometry = new THREE.BufferGeometry();
+                    const positions = [];
+                    // Triangle 1: ankle, bigToe, heel
+                    positions.push(ankle.x, ankle.y, ankle.z);
+                    positions.push(bigToe.x, bigToe.y, bigToe.z);
+                    positions.push(heel.x, heel.y, heel.z);
+                    // Triangle 2: bigToe, smallToe, heel
+                    positions.push(bigToe.x, bigToe.y, bigToe.z);
+                    positions.push(smallToe.x, smallToe.y, smallToe.z);
+                    positions.push(heel.x, heel.y, heel.z);
+                    // Triangle 3: ankle, smallToe, bigToe
+                    positions.push(ankle.x, ankle.y, ankle.z);
+                    positions.push(smallToe.x, smallToe.y, smallToe.z);
+                    positions.push(bigToe.x, bigToe.y, bigToe.z);
+                    // Triangle 4: ankle, heel, smallToe (reversed winding for visibility)
+                    positions.push(ankle.x, ankle.y, ankle.z);
+                    positions.push(heel.x, heel.y, heel.z);
+                    positions.push(smallToe.x, smallToe.y, smallToe.z);
+
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                    geometry.computeVertexNormals();
+
+                    const material = new THREE.MeshBasicMaterial({
+                        color: new THREE.Color(`rgb(${foot.color[0]}, ${foot.color[1]}, ${foot.color[2]})`),
+                        transparent: true,
+                        opacity: 0.1,
+                        depthWrite: false
+                    });
+
+                    skeletonGroup.add(new THREE.Mesh(geometry, material));
+                }
+
+                // Create hand palm polygons (transparent)
+                // Left hand: wrist(62), thumb_third(45), thumb_second(44), index_third(49), middle_third(53), ring_third(57), pinky_third(61)
+                // Right hand: wrist(41), thumb_third(24), thumb_second(23), index_third(28), middle_third(32), ring_third(36), pinky_third(40)
+                const handIndices = [
+                    { indices: [62, 45, 44, 49, 53, 57, 61], color: [0, 255, 0] },      // left hand
+                    { indices: [41, 24, 23, 28, 32, 36, 40], color: [255, 128, 0] }     // right hand
+                ];
+
+                for (const hand of handIndices) {
+                    const pts = hand.indices.map(i => keypoints[i]);
+
+                    if (!pts.every(isValidKp)) continue;
+
+                    const tPts = pts.map(transformPt);
+                    const [wrist, thumbThird, thumbSecond, indexThird, middleThird, ringThird, pinkyThird] = tPts;
+
+                    const geometry = new THREE.BufferGeometry();
+                    const positions = [];
+                    // Fan triangulation from wrist
+                    // Triangle 1: wrist, thumbThird, thumbSecond
+                    positions.push(wrist.x, wrist.y, wrist.z);
+                    positions.push(thumbThird.x, thumbThird.y, thumbThird.z);
+                    positions.push(thumbSecond.x, thumbSecond.y, thumbSecond.z);
+                    // Triangle 2: wrist, thumbSecond, indexThird
+                    positions.push(wrist.x, wrist.y, wrist.z);
+                    positions.push(thumbSecond.x, thumbSecond.y, thumbSecond.z);
+                    positions.push(indexThird.x, indexThird.y, indexThird.z);
+                    // Triangle 3: wrist, indexThird, middleThird
+                    positions.push(wrist.x, wrist.y, wrist.z);
+                    positions.push(indexThird.x, indexThird.y, indexThird.z);
+                    positions.push(middleThird.x, middleThird.y, middleThird.z);
+                    // Triangle 4: wrist, middleThird, ringThird
+                    positions.push(wrist.x, wrist.y, wrist.z);
+                    positions.push(middleThird.x, middleThird.y, middleThird.z);
+                    positions.push(ringThird.x, ringThird.y, ringThird.z);
+                    // Triangle 5: wrist, ringThird, pinkyThird
+                    positions.push(wrist.x, wrist.y, wrist.z);
+                    positions.push(ringThird.x, ringThird.y, ringThird.z);
+                    positions.push(pinkyThird.x, pinkyThird.y, pinkyThird.z);
+
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                    geometry.computeVertexNormals();
+
+                    const material = new THREE.MeshBasicMaterial({
+                        color: new THREE.Color(`rgb(${hand.color[0]}, ${hand.color[1]}, ${hand.color[2]})`),
+                        transparent: true,
+                        opacity: 0.1,
+                        side: THREE.DoubleSide,
+                        depthWrite: false
+                    });
+
+                    skeletonGroup.add(new THREE.Mesh(geometry, material));
+                }
+
                 // Create bones (colored lines)
                 // Combine regular bones with virtual bones (spine, neck, head)
                 const allBones = [...bones.map((b, i) => [b[0], b[1], boneColors[i]]), ...virtualBones];
