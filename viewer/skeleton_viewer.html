@@ -334,6 +334,32 @@
                 // Helper to check if keypoint is valid
                 const isValidKp = (kp) => kp && !(kp[0] === 0 && kp[1] === 0 && kp[2] === 0);
 
+                // Create head sphere at midpoint between ears
+                const leftEye = keypoints[1];
+                const headMid = keypoints[72]; // virtual midpoint between ears
+                if (isValidKp(leftEye) && headMid) {
+                    const headRadius = Math.sqrt(
+                        Math.pow(headMid[0] - leftEye[0], 2) +
+                        Math.pow(headMid[1] - leftEye[1], 2) +
+                        Math.pow(headMid[2] - leftEye[2], 2)
+                    ) * scale;
+
+                    const headGeometry = new THREE.SphereGeometry(headRadius, 16, 16);
+                    const headMaterial = new THREE.MeshBasicMaterial({
+                        color: 0x3399ff,
+                        transparent: true,
+                        opacity: 0.3,
+                        depthWrite: false
+                    });
+                    const headSphere = new THREE.Mesh(headGeometry, headMaterial);
+                    headSphere.position.set(
+                        (headMid[0] - centerX) * scale,
+                        (headMid[1] - minY) * scale,
+                        (headMid[2] - centerZ) * scale
+                    );
+                    skeletonGroup.add(headSphere);
+                }
+
                 // Create foot polygons (transparent)
                 // Left foot: ankle(13), big_toe(15), small_toe(16), heel(17)
                 // Right foot: ankle(14), big_toe(18), small_toe(19), heel(20)
@@ -465,9 +491,15 @@
                     ];
 
                     const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+                    // Check if this is a foot bone (both endpoints in 13-20 range, not knee-to-ankle)
+                    const isFootBone = (startIdx >= 13 && startIdx <= 20) && (endIdx >= 13 && endIdx <= 20);
+
                     const material = new THREE.LineBasicMaterial({
                         color: new THREE.Color(`rgb(${color[0]}, ${color[1]}, ${color[2]})`),
-                        linewidth: 2
+                        linewidth: 2,
+                        transparent: isFootBone,
+                        opacity: isFootBone ? 0.5 : 1.0
                     });
                     const line = new THREE.Line(geometry, material);
                     skeletonGroup.add(line);
