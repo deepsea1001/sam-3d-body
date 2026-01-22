@@ -58,6 +58,9 @@ def main(args):
         from tools.gltf_export_utils import GLBExporter
         exporter = GLBExporter()
 
+    # Collect outputs for FBX export
+    fbx_frame_outputs = [] if args.export_fbx else None
+
     # Initialize sam-3d-body model and other optional modules
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -142,6 +145,10 @@ def main(args):
         if exporter is not None:
              exporter.add_frame(outputs)
 
+        # Collect for FBX export
+        if fbx_frame_outputs is not None and outputs:
+            fbx_frame_outputs.append(outputs)
+
         duration = time.time() - start_time
         pbar.set_postfix(time=f"{duration:.2f}s")
 
@@ -174,6 +181,31 @@ def main(args):
             exporter.save(os.path.join(output_folder, "skeleton_anim.glb"))
         else:
             exporter.save_motion("skeleton_motion.npz")
+
+    # Export FBX
+    if fbx_frame_outputs:
+        from tools.fbx_export import export_fbx
+        fbx_path = os.path.join(output_folder, "skeleton.fbx")
+        bind_pose_path = args.fbx_bind_pose if args.fbx_bind_pose else None
+
+        # Use default bind pose if mode is 'bind' but no path specified
+        if args.fbx_rotation_mode == "bind" and not bind_pose_path:
+            default_bind = os.path.join(root, "data/bind_poses/default_human.json")
+            if os.path.exists(default_bind):
+                bind_pose_path = default_bind
+            else:
+                print(f"Warning: bind mode requires --fbx_bind_pose, using absolute mode")
+                args.fbx_rotation_mode = "absolute"
+
+        export_fbx(
+            fbx_frame_outputs,
+            fbx_path,
+            include_mesh=args.export_fbx_mesh,
+            rotation_mode=args.fbx_rotation_mode,
+            bind_pose_path=bind_pose_path,
+            fps=args.fbx_fps,
+            faces=estimator.faces,
+        )
 
 
 if __name__ == "__main__":
@@ -289,6 +321,35 @@ if __name__ == "__main__":
         "--export_json",
         action="store_true",
         help="Export 3D skeletons to JSON for web viewer (one file per image)",
+    )
+    parser.add_argument(
+        "--export_fbx",
+        action="store_true",
+        help="Export FBX skeleton for Maya/DCC tools",
+    )
+    parser.add_argument(
+        "--export_fbx_mesh",
+        action="store_true",
+        help="Include mesh in FBX export",
+    )
+    parser.add_argument(
+        "--fbx_fps",
+        type=int,
+        default=24,
+        help="Frame rate for FBX animation (default: 24)",
+    )
+    parser.add_argument(
+        "--fbx_rotation_mode",
+        type=str,
+        default="absolute",
+        choices=["absolute", "relative", "bind"],
+        help="Rotation mode: absolute (world-space), relative (to first frame), bind (to bind pose)",
+    )
+    parser.add_argument(
+        "--fbx_bind_pose",
+        type=str,
+        default="",
+        help="Path to bind pose JSON (required if rotation_mode=bind)",
     )
     parser.add_argument(
         "--resize",
