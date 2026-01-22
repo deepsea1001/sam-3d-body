@@ -20,6 +20,20 @@ from tools.vis_utils import visualize_sample, visualize_sample_together, visuali
 from tqdm import tqdm
 
 
+def resize_image(img, max_size):
+    """Resize image so longest dimension equals max_size, preserving aspect ratio."""
+    h, w = img.shape[:2]
+    if max(h, w) <= max_size:
+        return img
+    if h > w:
+        new_h = max_size
+        new_w = int(w * max_size / h)
+    else:
+        new_w = max_size
+        new_h = int(h * max_size / w)
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def main(args):
     if args.output_folder == "":
         output_folder = os.path.join("./output", os.path.basename(args.image_folder))
@@ -104,9 +118,20 @@ def main(args):
     for image_path in pbar:
         pbar.set_description(f"Processing {os.path.basename(image_path)}")
         start_time = time.time()
-            
+
+        # Load and optionally resize image
+        img = cv2.imread(image_path)
+        if args.resize > 0:
+            orig_h, orig_w = img.shape[:2]
+            img = resize_image(img, args.resize)
+            if img.shape[:2] != (orig_h, orig_w):
+                tqdm.write(f"[RESIZE] {os.path.basename(image_path)}: {orig_w}x{orig_h} -> {img.shape[1]}x{img.shape[0]}")
+
+        # Convert BGR to RGB for process_one_image (expects RGB when given numpy array)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
         outputs = estimator.process_one_image(
-            image_path,
+            img_rgb,
             bbox_thr=args.bbox_thresh,
             use_mask=args.use_mask,
             det_prompt=args.det_prompt,
@@ -115,14 +140,13 @@ def main(args):
         # Export Skeleton Data
         if exporter is not None:
              exporter.add_frame(outputs)
-        
+
         duration = time.time() - start_time
         pbar.set_postfix(time=f"{duration:.2f}s")
 
         if args.debug:
             tqdm.write(f"[DEBUG] {os.path.basename(image_path)}: {duration:.3f}s, found {len(outputs)} humans")
 
-        img = cv2.imread(image_path)
         vis_images = visualize_sample_together(img, outputs, estimator.faces)
         
         base_name = os.path.basename(image_path)[:-4]
@@ -254,6 +278,12 @@ if __name__ == "__main__":
         "--export_glb",
         action="store_true",
         help="Export detected 3D skeletons to .glb (Binary GLTF) for animation",
+    )
+    parser.add_argument(
+        "--resize",
+        type=int,
+        default=0,
+        help="Resize images so longest dimension equals this value before processing (0 to disable, e.g., --resize 1024)",
     )
     args = parser.parse_args()
 
