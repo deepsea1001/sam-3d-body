@@ -190,12 +190,51 @@ def export_from_pipeline_outputs(outputs, output_path, source_image=None):
     Returns:
         Path to the saved JSON file, or None if no keypoints found
     """
-    keypoints_list = []
+    people = []
     for person_output in outputs:
-        if "pred_keypoints_3d" in person_output:
-            keypoints_list.append(person_output["pred_keypoints_3d"])
+        if "pred_keypoints_3d" not in person_output:
+            continue
 
-    if not keypoints_list:
+        keypoints_3d = person_output["pred_keypoints_3d"]
+        if not isinstance(keypoints_3d, np.ndarray):
+            keypoints_3d = np.array(keypoints_3d)
+
+        # Take first 70 keypoints if more are provided
+        if keypoints_3d.shape[0] > 70:
+            keypoints_3d = keypoints_3d[:70]
+
+        # Get camera translation for world positioning
+        cam_t = person_output.get("pred_cam_t", np.zeros(3))
+        if not isinstance(cam_t, np.ndarray):
+            cam_t = np.array(cam_t)
+
+        people.append({
+            "keypoints": keypoints_3d.tolist(),
+            "cam_t": cam_t.tolist()
+        })
+
+    if not people:
         return None
 
-    return export_multi_skeleton_json(keypoints_list, output_path, source_image)
+    # Build bone index pairs and colors
+    bones, bone_colors = get_bones_and_colors()
+
+    # Build JSON structure
+    data = {
+        "version": "1.1",
+        "source_image": source_image or "",
+        "people": people,
+        "keypoint_names": MHR70_NAMES,
+        "bones": bones,
+        "bone_colors": bone_colors
+    }
+
+    # Ensure output directory exists
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write JSON
+    with open(output_path, 'w') as f:
+        json.dump(data, f)
+
+    return output_path

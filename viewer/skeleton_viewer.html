@@ -210,30 +210,65 @@
 
             skeletonGroup = new THREE.Group();
 
-            // Support both single-person (keypoints) and multi-person (people) formats
-            const peopleData = data.people || [data.keypoints];
             const bones = data.bones;
             const boneColors = data.bone_colors;
 
-            // Calculate global bounds across all people
-            let minY = Infinity, maxY = -Infinity;
-            let centerX = 0, centerZ = 0;
-            let validCount = 0;
+            // Handle different JSON format versions
+            // v1.1: people is array of {keypoints, cam_t}
+            // v1.0: people is array of keypoints arrays (or single keypoints array)
+            let peopleData = [];
+            if (data.people && data.people.length > 0) {
+                if (Array.isArray(data.people[0]) || (data.people[0].keypoints === undefined)) {
+                    // v1.0 format: people is array of keypoint arrays
+                    peopleData = data.people.map(kps => ({
+                        keypoints: Array.isArray(kps) ? kps : data.keypoints,
+                        cam_t: [0, 0, 0]
+                    }));
+                } else {
+                    // v1.1 format: people is array of {keypoints, cam_t}
+                    peopleData = data.people;
+                }
+            } else if (data.keypoints) {
+                // Legacy single-person format
+                peopleData = [{ keypoints: data.keypoints, cam_t: [0, 0, 0] }];
+            }
 
-            for (const keypoints of peopleData) {
+            // Transform keypoints: apply cam_t offset and convert coordinate system
+            // CV convention: Y-down, Z-forward (into screen)
+            // Three.js convention: Y-up, Z-toward viewer
+            // Transform: x' = x, y' = -y, z' = -z
+            const transformedPeople = peopleData.map(person => {
+                const cam_t = person.cam_t || [0, 0, 0];
+                return person.keypoints.map(kp => [
+                    kp[0] + cam_t[0],           // X stays same
+                    -(kp[1] + cam_t[1]),        // Flip Y
+                    -(kp[2] + cam_t[2])         // Flip Z (depth)
+                ]);
+            });
+
+            // Calculate global bounds across all transformed people
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            for (const keypoints of transformedPeople) {
                 for (const kp of keypoints) {
                     if (kp[0] !== 0 || kp[1] !== 0 || kp[2] !== 0) {
+                        minX = Math.min(minX, kp[0]);
+                        maxX = Math.max(maxX, kp[0]);
                         minY = Math.min(minY, kp[1]);
                         maxY = Math.max(maxY, kp[1]);
-                        centerX += kp[0];
-                        centerZ += kp[2];
-                        validCount++;
+                        minZ = Math.min(minZ, kp[2]);
+                        maxZ = Math.max(maxZ, kp[2]);
                     }
                 }
             }
 
-            centerX /= validCount || 1;
-            centerZ /= validCount || 1;
+            // Center of bounding box (for camera target)
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const centerZ = (minZ + maxZ) / 2;
+
             const height = maxY - minY || 1;
             const scale = 1.8 / height; // Target ~1.8 units tall
 
@@ -242,7 +277,7 @@
             const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
             // Build skeleton for each person
-            for (const keypoints of peopleData) {
+            for (const keypoints of transformedPeople) {
                 // Create joints (small spheres)
                 for (let i = 0; i < keypoints.length; i++) {
                     const kp = keypoints[i];
@@ -302,7 +337,7 @@
             controls.update();
 
             // Update info with person count
-            const personCount = peopleData.length;
+            const personCount = transformedPeople.length;
             document.getElementById('filename').textContent =
                 `${filename || ''} (${personCount} ${personCount === 1 ? 'person' : 'people'})`;
         }
