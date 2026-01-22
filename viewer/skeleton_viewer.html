@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MHR70 Skeleton Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #888;
+            font-size: 12px;
+            pointer-events: none;
+        }
+        #info h1 {
+            font-size: 14px;
+            color: #ccc;
+            margin-bottom: 5px;
+        }
+        #drop-zone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            text-align: center;
+            pointer-events: none;
+        }
+        #drop-zone.hidden {
+            display: none;
+        }
+        #drop-zone h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        #drop-zone p {
+            font-size: 14px;
+        }
+        .drag-over {
+            background: #2a2a2a !important;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #666;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="info">
+        <h1>MHR70 Skeleton Viewer</h1>
+        <div id="filename"></div>
+    </div>
+    <div id="drop-zone">
+        <h2>Drop JSON file here</h2>
+        <p>or use ?file=path/to/skeleton.json</p>
+    </div>
+    <div id="controls">
+        Left-drag: rotate | Scroll: zoom | Right-drag: pan
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        let skeletonGroup = null;
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                50,
+                window.innerWidth / window.innerHeight,
+                0.01,
+                100
+            );
+            camera.position.set(0, 1, 3);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(0, 0.9, 0);
+            controls.update();
+
+            // Grid
+            const gridHelper = new THREE.GridHelper(4, 20, 0x333333, 0x222222);
+            scene.add(gridHelper);
+
+            // Ambient light
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            // Handle resize
+            window.addEventListener('resize', onWindowResize);
+
+            // Setup drag and drop
+            setupDragDrop();
+
+            // Check URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const fileParam = urlParams.get('file');
+            if (fileParam) {
+                loadSkeleton(fileParam);
+            }
+
+            // Start render loop
+            animate();
+        }
+
+        function setupDragDrop() {
+            const body = document.body;
+
+            body.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                body.classList.add('drag-over');
+            });
+
+            body.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                body.classList.remove('drag-over');
+            });
+
+            body.addEventListener('drop', (e) => {
+                e.preventDefault();
+                body.classList.remove('drag-over');
+
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.endsWith('.json')) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const data = JSON.parse(event.target.result);
+                            buildSkeleton(data, file.name);
+                        } catch (err) {
+                            console.error('Failed to parse JSON:', err);
+                            alert('Failed to parse JSON file');
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            });
+        }
+
+        async function loadSkeleton(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                const filename = url.split('/').pop();
+                buildSkeleton(data, filename);
+            } catch (err) {
+                console.error('Failed to load skeleton:', err);
+                alert(`Failed to load: ${url}\n${err.message}`);
+            }
+        }
+
+        function buildSkeleton(data, filename) {
+            // Remove existing skeleton
+            if (skeletonGroup) {
+                scene.remove(skeletonGroup);
+                skeletonGroup.traverse((obj) => {
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) obj.material.dispose();
+                });
+            }
+
+            // Hide drop zone
+            document.getElementById('drop-zone').classList.add('hidden');
+            document.getElementById('filename').textContent = filename || '';
+
+            skeletonGroup = new THREE.Group();
+
+            // Support both single-person (keypoints) and multi-person (people) formats
+            const peopleData = data.people || [data.keypoints];
+            const bones = data.bones;
+            const boneColors = data.bone_colors;
+
+            // Calculate global bounds across all people
+            let minY = Infinity, maxY = -Infinity;
+            let centerX = 0, centerZ = 0;
+            let validCount = 0;
+
+            for (const keypoints of peopleData) {
+                for (const kp of keypoints) {
+                    if (kp[0] !== 0 || kp[1] !== 0 || kp[2] !== 0) {
+                        minY = Math.min(minY, kp[1]);
+                        maxY = Math.max(maxY, kp[1]);
+                        centerX += kp[0];
+                        centerZ += kp[2];
+                        validCount++;
+                    }
+                }
+            }
+
+            centerX /= validCount || 1;
+            centerZ /= validCount || 1;
+            const height = maxY - minY || 1;
+            const scale = 1.8 / height; // Target ~1.8 units tall
+
+            // Create geometry templates
+            const jointGeometry = new THREE.SphereGeometry(0.012, 8, 8);
+            const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+            // Build skeleton for each person
+            for (const keypoints of peopleData) {
+                // Create joints (small spheres)
+                for (let i = 0; i < keypoints.length; i++) {
+                    const kp = keypoints[i];
+                    // Skip if keypoint is at origin (invalid)
+                    if (kp[0] === 0 && kp[1] === 0 && kp[2] === 0) continue;
+
+                    const joint = new THREE.Mesh(jointGeometry, jointMaterial);
+                    joint.position.set(
+                        (kp[0] - centerX) * scale,
+                        (kp[1] - minY) * scale,
+                        (kp[2] - centerZ) * scale
+                    );
+                    skeletonGroup.add(joint);
+                }
+
+                // Create bones (colored lines)
+                for (let i = 0; i < bones.length; i++) {
+                    const [startIdx, endIdx] = bones[i];
+                    const color = boneColors[i];
+
+                    const startKp = keypoints[startIdx];
+                    const endKp = keypoints[endIdx];
+
+                    // Skip if either keypoint is invalid
+                    if ((startKp[0] === 0 && startKp[1] === 0 && startKp[2] === 0) ||
+                        (endKp[0] === 0 && endKp[1] === 0 && endKp[2] === 0)) {
+                        continue;
+                    }
+
+                    const points = [
+                        new THREE.Vector3(
+                            (startKp[0] - centerX) * scale,
+                            (startKp[1] - minY) * scale,
+                            (startKp[2] - centerZ) * scale
+                        ),
+                        new THREE.Vector3(
+                            (endKp[0] - centerX) * scale,
+                            (endKp[1] - minY) * scale,
+                            (endKp[2] - centerZ) * scale
+                        )
+                    ];
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    const material = new THREE.LineBasicMaterial({
+                        color: new THREE.Color(`rgb(${color[0]}, ${color[1]}, ${color[2]})`),
+                        linewidth: 2
+                    });
+                    const line = new THREE.Line(geometry, material);
+                    skeletonGroup.add(line);
+                }
+            }
+
+            scene.add(skeletonGroup);
+
+            // Update camera target to skeleton center
+            controls.target.set(0, height * scale * 0.5, 0);
+            controls.update();
+
+            // Update info with person count
+            const personCount = peopleData.length;
+            document.getElementById('filename').textContent =
+                `${filename || ''} (${personCount} ${personCount === 1 ? 'person' : 'people'})`;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>

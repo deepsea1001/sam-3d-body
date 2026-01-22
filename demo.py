@@ -17,6 +17,7 @@ import numpy as np
 import torch
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
 from tools.vis_utils import visualize_sample, visualize_sample_together, visualize_debug_detections
+from tools.json_export import export_from_pipeline_outputs
 from tqdm import tqdm
 
 
@@ -163,6 +164,11 @@ def main(args):
                 debug_img.astype(np.uint8),
             )
 
+        # Export JSON for web viewer (one file per image)
+        if args.export_json and outputs:
+            json_path = f"{output_folder}/{base_name}_skeleton.json"
+            export_from_pipeline_outputs(outputs, json_path, os.path.basename(image_path))
+
     if exporter is not None:
         if args.export_glb:
             exporter.save(os.path.join(output_folder, "skeleton_anim.glb"))
@@ -278,6 +284,11 @@ if __name__ == "__main__":
         "--export_glb",
         action="store_true",
         help="Export detected 3D skeletons to .glb (Binary GLTF) for animation",
+    )
+    parser.add_argument(
+        "--export_json",
+        action="store_true",
+        help="Export 3D skeletons to JSON for web viewer (one file per image)",
     )
     parser.add_argument(
         "--resize",
