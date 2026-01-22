@@ -34,6 +34,15 @@ def main(args):
     segmentor_path = args.segmentor_path or os.environ.get("SAM3D_SEGMENTOR_PATH", "")
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", "")
 
+    # Initialize Skeleton Exporter
+    exporter = None
+    if args.export_skeleton:
+        from tools.export_utils import SkeletonExporter
+        exporter = SkeletonExporter(output_folder)
+    elif args.export_glb:
+        from tools.gltf_export_utils import GLBExporter
+        exporter = GLBExporter()
+
     # Initialize sam-3d-body model and other optional modules
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -102,6 +111,10 @@ def main(args):
             use_mask=args.use_mask,
             det_prompt=args.det_prompt,
         )
+
+        # Export Skeleton Data
+        if exporter is not None:
+             exporter.add_frame(outputs)
         
         duration = time.time() - start_time
         pbar.set_postfix(time=f"{duration:.2f}s")
@@ -110,11 +123,14 @@ def main(args):
             tqdm.write(f"[DEBUG] {os.path.basename(image_path)}: {duration:.3f}s, found {len(outputs)} humans")
 
         img = cv2.imread(image_path)
-        rend_img = visualize_sample_together(img, outputs, estimator.faces)
-        cv2.imwrite(
-            f"{output_folder}/{os.path.basename(image_path)[:-4]}.jpg",
-            rend_img.astype(np.uint8),
-        )
+        vis_images = visualize_sample_together(img, outputs, estimator.faces)
+        
+        base_name = os.path.basename(image_path)[:-4]
+        for suffix, vis_img in vis_images.items():
+            cv2.imwrite(
+                f"{output_folder}/{base_name}_{suffix}.jpg",
+                vis_img.astype(np.uint8),
+            )
 
         if args.debug:
             debug_img = visualize_debug_detections(img, outputs)
@@ -122,6 +138,12 @@ def main(args):
                 f"{output_folder}/{os.path.basename(image_path)[:-4]}_debug.jpg",
                 debug_img.astype(np.uint8),
             )
+
+    if exporter is not None:
+        if args.export_glb:
+            exporter.save(os.path.join(output_folder, "skeleton_anim.glb"))
+        else:
+            exporter.save_motion("skeleton_motion.npz")
 
 
 if __name__ == "__main__":
@@ -222,6 +244,16 @@ if __name__ == "__main__":
         type=str,
         default="person",
         help="Text prompt for human detection (e.g. 'person')",
+    )
+    parser.add_argument(
+        "--export_skeleton",
+        action="store_true",
+        help="Export detected 3D skeletons to .npz for animation",
+    )
+    parser.add_argument(
+        "--export_glb",
+        action="store_true",
+        help="Export detected 3D skeletons to .glb (Binary GLTF) for animation",
     )
     args = parser.parse_args()
 

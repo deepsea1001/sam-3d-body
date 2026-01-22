@@ -97,8 +97,13 @@ def visualize_sample_together(img_cv2, outputs, faces):
     img_mesh = img_cv2.copy()
 
     if len(outputs) == 0:
-        # Return a concatenated image showing the original image 4 times
-        return np.concatenate([img_cv2, img_cv2, img_cv2, img_cv2], axis=1)
+        # Return dict with original image for all views
+        return {
+            "ref": img_cv2,
+            "skeleton": img_cv2,
+            "mesh": img_cv2,
+            "mesh_side": img_cv2
+        }
 
     # First, sort by depth, furthest to closest
     all_depths = np.stack([tmp['pred_cam_t'] for tmp in outputs], axis=0)[:, 2]
@@ -152,9 +157,12 @@ def visualize_sample_together(img_cv2, outputs, faces):
         * 255
     )
 
-    cur_img = np.concatenate([img_cv2, img_keypoints, img_mesh, img_mesh_side], axis=1)
-
-    return cur_img
+    return {
+        "ref": img_cv2,
+        "skeleton": img_keypoints,
+        "mesh": img_mesh,
+        "mesh_side": img_mesh_side
+    }
 
 
 def visualize_debug_detections(img_cv2, outputs):
