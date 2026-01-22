@@ -92,6 +92,7 @@
 
         let scene, camera, renderer, controls;
         let skeletonGroup = null;
+        let headCircles = []; // Store head circles to orient toward camera
 
         function init() {
             const container = document.getElementById('canvas-container');
@@ -201,6 +202,9 @@
             document.getElementById('drop-zone').classList.add('hidden');
             document.getElementById('filename').textContent = filename || '';
 
+            // Clear head circles from previous skeleton
+            headCircles = [];
+
             skeletonGroup = new THREE.Group();
 
             const bones = data.bones;
@@ -299,10 +303,13 @@
             // Regular joints and smaller hand/finger joints (0.25x size)
             const jointGeometry = new THREE.SphereGeometry(0.003, 6, 6);
             const handJointGeometry = new THREE.SphereGeometry(0.0015, 4, 4);
+            const eyeJointGeometry = new THREE.SphereGeometry(0.006, 8, 8); // 3x regular size
             const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
             // Hand keypoint indices: 21-41 (right hand), 42-62 (left hand)
             const isHandJoint = (idx) => (idx >= 21 && idx <= 41) || (idx >= 42 && idx <= 62);
+            // Eye keypoint indices: 1 (left_eye), 2 (right_eye)
+            const isEyeJoint = (idx) => idx === 1 || idx === 2;
             // Extra keypoints to skip: 63-69 (olecranon, cubital fossa, acromion, neck)
             const isExtraJoint = (idx) => idx >= 63 && idx <= 69;
 
@@ -314,7 +321,7 @@
                     // Skip if keypoint is at origin (invalid), virtual (70+), or extra (63-69)
                     if (i >= 70 || isExtraJoint(i) || (kp[0] === 0 && kp[1] === 0 && kp[2] === 0)) continue;
 
-                    const geom = isHandJoint(i) ? handJointGeometry : jointGeometry;
+                    const geom = isEyeJoint(i) ? eyeJointGeometry : (isHandJoint(i) ? handJointGeometry : jointGeometry);
                     const joint = new THREE.Mesh(geom, jointMaterial);
                     joint.position.set(
                         (kp[0] - centerX) * scale,
@@ -334,7 +341,7 @@
                 // Helper to check if keypoint is valid
                 const isValidKp = (kp) => kp && !(kp[0] === 0 && kp[1] === 0 && kp[2] === 0);
 
-                // Create head sphere at midpoint between ears
+                // Create head circle (line geometry) at midpoint between ears
                 const leftEye = keypoints[1];
                 const headMid = keypoints[72]; // virtual midpoint between ears
                 if (isValidKp(leftEye) && headMid) {
@@ -344,20 +351,43 @@
                         Math.pow(headMid[2] - leftEye[2], 2)
                     ) * scale;
 
-                    const headGeometry = new THREE.SphereGeometry(headRadius, 16, 16);
-                    const headMaterial = new THREE.MeshBasicMaterial({
-                        color: 0x3399ff,
-                        transparent: true,
-                        opacity: 0.3,
-                        depthWrite: false
+                    // Create circle from line segments
+                    const segments = 32;
+                    const circlePoints = [];
+                    for (let i = 0; i <= segments; i++) {
+                        const theta = (i / segments) * Math.PI * 2;
+                        circlePoints.push(new THREE.Vector3(
+                            Math.cos(theta) * headRadius,
+                            Math.sin(theta) * headRadius,
+                            0
+                        ));
+                    }
+
+                    const circleGeometry = new THREE.BufferGeometry().setFromPoints(circlePoints);
+                    const circleMaterial = new THREE.LineBasicMaterial({
+                        color: new THREE.Color('rgb(51, 153, 255)')
                     });
-                    const headSphere = new THREE.Mesh(headGeometry, headMaterial);
-                    headSphere.position.set(
+                    const headCircle = new THREE.Line(circleGeometry, circleMaterial);
+                    headCircle.position.set(
                         (headMid[0] - centerX) * scale,
                         (headMid[1] - minY) * scale,
                         (headMid[2] - centerZ) * scale
                     );
-                    skeletonGroup.add(headSphere);
+
+                    // Add filled sphere behind the outline (matches viewer background)
+                    const fillGeometry = new THREE.SphereGeometry(headRadius * 0.9, 32, 32);
+                    const fillMaterial = new THREE.MeshBasicMaterial({
+                        color: 0x1a1a1a,
+                        transparent: true,
+                        opacity: 0.5,
+                        depthWrite: false
+                    });
+                    const headFill = new THREE.Mesh(fillGeometry, fillMaterial);
+                    headFill.position.copy(headCircle.position);
+                    skeletonGroup.add(headFill);
+
+                    skeletonGroup.add(headCircle);
+                    headCircles.push(headCircle);
                 }
 
                 // Create foot polygons (transparent)
@@ -527,6 +557,12 @@
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
+
+            // Orient head circles to face camera
+            for (const circle of headCircles) {
+                circle.quaternion.copy(camera.quaternion);
+            }
+
             renderer.render(scene, camera);
         }
 
