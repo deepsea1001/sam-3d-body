@@ -303,7 +303,7 @@
             // Regular joints and smaller hand/finger joints (0.25x size)
             const jointGeometry = new THREE.SphereGeometry(0.003, 6, 6);
             const handJointGeometry = new THREE.SphereGeometry(0.0015, 4, 4);
-            const eyeJointGeometry = new THREE.SphereGeometry(0.006, 8, 8); // 3x regular size
+            const eyeJointGeometry = new THREE.SphereGeometry(0.005, 8, 8); // 2ishx regular size
             const jointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
             // Hand keypoint indices: 21-41 (right hand), 42-62 (left hand)
@@ -375,7 +375,7 @@
                     );
 
                     // Add filled sphere behind the outline (matches viewer background)
-                    const fillGeometry = new THREE.SphereGeometry(headRadius * 0.9, 32, 32);
+                    const fillGeometry = new THREE.SphereGeometry(headRadius * 0.97, 32, 32);
                     const fillMaterial = new THREE.MeshBasicMaterial({
                         color: 0x1a1a1a,
                         transparent: true,
