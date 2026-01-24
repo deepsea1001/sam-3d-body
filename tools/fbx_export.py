@@ -236,6 +236,17 @@ def compute_twist_rotation(shoulder_pos, elbow_pos, olecranon_pos, cubital_fossa
     return float(angle)
 
 
+def build_children_map():
+    """Build a map of joint -> list of children from JOINT_HIERARCHY."""
+    children = {}
+    for joint, parent, _ in JOINT_HIERARCHY:
+        if parent is not None:
+            if parent not in children:
+                children[parent] = []
+            children[parent].append(joint)
+    return children
+
+
 def prepare_skeleton_data(outputs, rotation_mode="absolute", bind_pose=None, fps=24):
     """Prepare skeleton data for Blender export.
 
@@ -290,6 +301,7 @@ def prepare_skeleton_data(outputs, rotation_mode="absolute", bind_pose=None, fps
 
             # Compute rotations based on mode
             rotations = {}
+            scales = {}  # bone scale factors (for retargeting)
 
             if rotation_mode == "absolute":
                 # Compute world-space rotations from bone directions
@@ -302,22 +314,74 @@ def prepare_skeleton_data(outputs, rotation_mode="absolute", bind_pose=None, fps
                         )
 
             elif rotation_mode == "bind" and bind_pose:
-                # Rotations relative to bind pose
-                for joint_name, parent_name, _ in JOINT_HIERARCHY:
-                    if parent_name is None:
-                        rotations[joint_name] = [1, 0, 0, 0]
-                    elif joint_name in positions and parent_name in positions:
-                        # Get bind pose directions
-                        if joint_name in bind_pose and parent_name in bind_pose:
-                            bind_dir = np.array(bind_pose[joint_name]) - np.array(bind_pose[parent_name])
-                            curr_dir = np.array(positions[joint_name]) - np.array(positions[parent_name])
+                # Compute LOCAL rotations and SCALES relative to bind pose
+                # FK animation: rotation on joint controls bone FROM that joint TO its child
+                # Scale compensates for bone length differences (retargeting)
 
-                            # Compute rotation from bind to current
-                            rotations[joint_name] = quaternion_from_two_vectors(
-                                bind_dir, curr_dir
-                            )
-                        else:
-                            rotations[joint_name] = [1, 0, 0, 0]
+                children_map = build_children_map()
+                world_rotations = {}
+
+                for joint_name, parent_name, _ in JOINT_HIERARCHY:
+                    # Get first child to determine bone direction
+                    children = children_map.get(joint_name, [])
+                    first_child = children[0] if children else None
+
+                    if first_child is None:
+                        # Leaf joint - no bone to rotate/scale
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        scales[joint_name] = 1.0
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    if joint_name not in positions or first_child not in positions:
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        scales[joint_name] = 1.0
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    if joint_name not in bind_pose or first_child not in bind_pose:
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        scales[joint_name] = 1.0
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    # Compute bone vectors: joint -> first_child
+                    bind_vec_cv = np.array(bind_pose[first_child]) - np.array(bind_pose[joint_name])
+                    curr_vec_cv = np.array(positions[first_child]) - np.array(positions[joint_name])
+
+                    # Bone lengths for scaling
+                    bind_length = np.linalg.norm(bind_vec_cv)
+                    curr_length = np.linalg.norm(curr_vec_cv)
+
+                    # Scale factor: target_length / bind_length
+                    if bind_length > 1e-6:
+                        scales[joint_name] = float(curr_length / bind_length)
+                    else:
+                        scales[joint_name] = 1.0
+
+                    # Transform directions to Blender space
+                    bind_dir = cv_to_blender_vec(bind_vec_cv)
+                    curr_dir = cv_to_blender_vec(curr_vec_cv)
+
+                    # Get parent's accumulated world rotation
+                    parent_world_rot = world_rotations.get(parent_name, [1, 0, 0, 0])
+
+                    # Compute world-space rotation from bind_dir to curr_dir
+                    world_rot = quaternion_from_two_vectors(bind_dir, curr_dir)
+
+                    # Local rotation = parent^-1 * world_rot
+                    parent_inv = quat_conjugate(parent_world_rot)
+                    local_rot = quat_multiply(parent_inv, world_rot)
+
+                    # INVERT the rotation - Blender may apply it in opposite sense
+                    local_rot = quat_conjugate(local_rot)
+
+                    rotations[joint_name] = local_rot
+
+                    # This bone's world rotation for its children
+                    # Since we inverted local_rot, world = parent * local^-1 won't give world_rot
+                    # But for hierarchy, we still track the TARGET world orientation
+                    world_rotations[joint_name] = world_rot
 
             elif rotation_mode == "relative" and frame_idx == 0:
                 # First frame becomes bind pose for relative mode
@@ -326,25 +390,56 @@ def prepare_skeleton_data(outputs, rotation_mode="absolute", bind_pose=None, fps
                     rotations[joint_name] = [1, 0, 0, 0]
 
             elif rotation_mode == "relative" and bind_pose:
-                # Subsequent frames relative to first
-                for joint_name, parent_name, _ in JOINT_HIERARCHY:
-                    if parent_name is None:
-                        rotations[joint_name] = [1, 0, 0, 0]
-                    elif joint_name in positions and parent_name in positions:
-                        if joint_name in bind_pose and parent_name in bind_pose:
-                            bind_dir = np.array(bind_pose[joint_name]) - np.array(bind_pose[parent_name])
-                            curr_dir = np.array(positions[joint_name]) - np.array(positions[parent_name])
-                            rotations[joint_name] = quaternion_from_two_vectors(
-                                bind_dir, curr_dir
-                            )
-                        else:
-                            rotations[joint_name] = [1, 0, 0, 0]
+                # Subsequent frames relative to first - use local rotations
+                # FK animation: rotation on joint controls bone FROM that joint TO its child
+                children_map = build_children_map()
+                world_rotations = {}
 
-            person_frames.append({
+                for joint_name, parent_name, _ in JOINT_HIERARCHY:
+                    children = children_map.get(joint_name, [])
+                    first_child = children[0] if children else None
+
+                    if first_child is None:
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    if joint_name not in positions or first_child not in positions:
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    if joint_name not in bind_pose or first_child not in bind_pose:
+                        rotations[joint_name] = [1, 0, 0, 0]
+                        world_rotations[joint_name] = world_rotations.get(parent_name, [1, 0, 0, 0])
+                        continue
+
+                    bind_dir_cv = np.array(bind_pose[first_child]) - np.array(bind_pose[joint_name])
+                    curr_dir_cv = np.array(positions[first_child]) - np.array(positions[joint_name])
+                    bind_dir = cv_to_blender_vec(bind_dir_cv)
+                    curr_dir = cv_to_blender_vec(curr_dir_cv)
+
+                    parent_world_rot = world_rotations.get(parent_name, [1, 0, 0, 0])
+
+                    # World-space rotation from bind to current
+                    world_rot = quaternion_from_two_vectors(bind_dir, curr_dir)
+
+                    # Local rotation = parent^-1 * world_rot
+                    parent_inv = quat_conjugate(parent_world_rot)
+                    local_rot = quat_multiply(parent_inv, world_rot)
+                    rotations[joint_name] = local_rot
+                    world_rotations[joint_name] = world_rot
+
+            # Include scales if computed (bind mode retargeting)
+            frame_data = {
                 "frame": frame_idx,
                 "positions": positions,
                 "rotations": rotations
-            })
+            }
+            if scales:
+                frame_data["scales"] = scales
+
+            person_frames.append(frame_data)
 
         if person_frames:
             all_people.append({
@@ -352,13 +447,28 @@ def prepare_skeleton_data(outputs, rotation_mode="absolute", bind_pose=None, fps
                 "frames": person_frames
             })
 
-    return {
+    # For bind mode, include bind_pose positions for armature creation
+    result = {
         "people": all_people,
         "fps": fps,
         "hierarchy": [(j, p, k) for j, p, k in JOINT_HIERARCHY],
         "rotation_mode": rotation_mode,
-        "bind_pose": bind_pose
     }
+
+    # If using bind mode, armature should be created from bind pose
+    if rotation_mode == "bind" and bind_pose:
+        result["bind_pose_positions"] = bind_pose
+
+    return result
+
+
+def cv_to_blender_vec(v):
+    """Transform vector from CV coordinates (Y-down) to Blender (Z-up).
+
+    Same transformation as positions: X->X, Y->-Z, Z->Y
+    """
+    v = np.array(v, dtype=float)
+    return np.array([v[0], v[2], -v[1]])
 
 
 def quaternion_from_two_vectors(v1, v2):
@@ -398,6 +508,48 @@ def quaternion_from_two_vectors(v1, v2):
     quat = quat / np.linalg.norm(quat)
 
     return quat.tolist()
+
+
+def quat_multiply(q1, q2):
+    """Multiply two quaternions q1 * q2.
+
+    Both quaternions are [w, x, y, z] format.
+    Returns [w, x, y, z].
+    """
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+
+    w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+
+    return [w, x, y, z]
+
+
+def quat_conjugate(q):
+    """Return conjugate of quaternion (inverse for unit quaternions)."""
+    return [q[0], -q[1], -q[2], -q[3]]
+
+
+def quat_rotate_vector(q, v):
+    """Rotate vector v by quaternion q.
+
+    Args:
+        q: quaternion [w, x, y, z]
+        v: vector [x, y, z]
+
+    Returns:
+        rotated vector [x, y, z]
+    """
+    # Convert vector to quaternion with w=0
+    v_quat = [0, v[0], v[1], v[2]]
+
+    # Rotate: q * v * q^-1
+    q_conj = quat_conjugate(q)
+    result = quat_multiply(quat_multiply(q, v_quat), q_conj)
+
+    return np.array([result[1], result[2], result[3]])
 
 
 def find_blender():
@@ -453,9 +605,9 @@ def export_fbx(outputs, output_path, include_mesh=False, rotation_mode="absolute
     if rotation_mode == "bind":
         if not bind_pose_path:
             raise ValueError("bind_pose_path required when rotation_mode='bind'")
-        with open(bind_pose_path) as f:
-            bind_data = json.load(f)
-            bind_pose = bind_data.get("joints", bind_data)
+        bind_pose = load_bind_pose(bind_pose_path)
+        if verbose:
+            print(f"Loaded bind pose with {len(bind_pose)} joints")
 
     # Prepare skeleton data
     skeleton_data = prepare_skeleton_data(outputs, rotation_mode, bind_pose, fps)
@@ -527,16 +679,22 @@ def export_fbx(outputs, output_path, include_mesh=False, rotation_mode="absolute
 def load_bind_pose(path):
     """Load bind pose from JSON file.
 
-    Expected format:
-    {
-        "name": "default_human_tpose",
-        "joints": {
-            "root": [0, 0, 0],
-            "spine1": [0, 0.15, 0],
-            ...
-        }
-    }
+    Supports two formats:
+    1. Web viewer JSON with raw keypoints:
+       {"people": [{"keypoints": [[x,y,z], ...]}]}
+    2. Named joints format:
+       {"joints": {"root": [x,y,z], ...}}
     """
     with open(path) as f:
         data = json.load(f)
+
+    # Check if it's web viewer format (has "people" with "keypoints")
+    if "people" in data and data["people"]:
+        person = data["people"][0]
+        if "keypoints" in person:
+            # Convert raw keypoints to joint positions
+            keypoints = np.array(person["keypoints"])
+            return compute_joint_positions(keypoints)
+
+    # Otherwise expect named joints format
     return data.get("joints", data)

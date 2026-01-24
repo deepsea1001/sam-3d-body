@@ -60,11 +60,15 @@ python demo.py --image_folder ./data/samples --checkpoint_path ./checkpoints/sam
   - `decoders/` - Promptable decoder, prompt encoder, keypoint sampler
   - `heads/` - MHR pose head, camera head
 
-- **`tools/`** - External model wrappers
+- **`tools/`** - External model wrappers and visualization
   - `build_detector.py` - `HumanDetector` class (supports ViTDet, SAM3)
   - `build_fov_estimator.py` - `FOVEstimator` class (MoGe2)
   - `build_sam.py` - `HumanSegmentor` class (SAM2)
-  - `vis_utils.py` - Visualization functions for mesh/skeleton rendering
+  - `vis_utils.py` - 2D skeleton/mesh visualization (uses BGR colors for OpenCV)
+  - `json_export.py` - JSON export for web viewer (defines MHR70_BONES with RGB colors)
+
+- **`viewer/`** - Web-based 3D visualization
+  - `skeleton_viewer.html` - Three.js skeleton viewer (drag-drop JSON, orbit controls)
 
 - **`notebook/utils.py`** - Helper functions including `setup_sam_3d_body()` for easy initialization
 
@@ -93,7 +97,12 @@ Uses MHR70 format (defined in `sam_3d_body/metadata/mhr70.py`):
 - 15-20: Feet (toes, heels)
 - 21-41: Right hand (21 keypoints)
 - 42-62: Left hand (21 keypoints)
-- 63-69: Extra (olecranon, cubital fossa, acromion, neck)
+- 63-69: Extra (olecranon, cubital fossa, acromion, neck) - typically skipped in visualization
+
+Virtual keypoints computed for spine/neck visualization:
+- 70: midHip (midpoint of indices 9, 10)
+- 71: midShoulder (midpoint of indices 5, 6)
+- 72: head (midpoint of indices 3, 4)
 
 ## Hardware Support
 
@@ -112,3 +121,10 @@ SAM3D_DETECTOR_PATH # Path to detector model
 SAM3D_SEGMENTOR_PATH # Path to segmentor model
 SAM3D_FOV_PATH      # Path to FOV model
 ```
+
+## Development Notes
+
+### Color Conventions
+- `vis_utils.py` uses BGR (OpenCV format)
+- `json_export.py` and `skeleton_viewer.html` use RGB (Three.js format)
+- When porting colors between Python and web viewer, reverse the order: `[R,G,B]` ↔ `(B,G,R)`

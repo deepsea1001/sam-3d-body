@@ -353,7 +353,6 @@ def visualize_sample_together(img_cv2, outputs, faces):
             "ref": img_cv2,
             "skeleton": img_cv2,
             "mesh": img_cv2,
-            "mesh_side": img_cv2
         }
 
     # First, sort by depth, furthest to closest
@@ -394,25 +393,10 @@ def visualize_sample_together(img_cv2, outputs, faces):
         * 255
     )
 
-    # Render side view
-    white_img = np.ones_like(img_cv2) * 255
-    img_mesh_side = (
-        renderer(
-            all_pred_vertices,
-            fake_pred_cam_t,
-            white_img,
-            mesh_base_color=LIGHT_BLUE,
-            scene_bg_color=(1, 1, 1),
-            side_view=True,
-        )
-        * 255
-    )
-
     return {
         "ref": img_cv2,
         "skeleton": img_keypoints,
         "mesh": img_mesh,
-        "mesh_side": img_mesh_side
     }
 
 

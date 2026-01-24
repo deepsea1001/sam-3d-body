@@ -106,20 +106,19 @@ def create_armature(name, hierarchy, first_frame_positions):
     return armature
 
 
-def set_keyframes(armature, people_data, fps):
+def set_keyframes(armature, people_data, fps, rotation_mode="absolute"):
     """Set keyframes for animation.
 
-    For single frame: this is a bind/reference pose - no rotations needed.
-    The bone positions in edit mode define the pose.
-
-    For multi-frame: rotations would be applied relative to bind pose.
+    For single frame without bind pose: rest/reference pose (no rotations).
+    For single frame with bind pose: apply rotations and scales relative to bind.
+    For multi-frame: apply rotations and scales for animation.
 
     Args:
         armature: armature object
         people_data: list of person data with frames
         fps: frame rate
+        rotation_mode: "absolute", "relative", or "bind"
     """
-    # Set frame rate
     bpy.context.scene.render.fps = fps
 
     if not people_data:
@@ -131,20 +130,57 @@ def set_keyframes(armature, people_data, fps):
     if not frames:
         return
 
-    # Set frame range
     bpy.context.scene.frame_start = 0
     bpy.context.scene.frame_end = len(frames) - 1
 
-    # For single frame (bind pose), no animation needed
-    # The rest pose defined by bone positions IS the pose
-    if len(frames) == 1:
-        print("Single frame - using as bind pose (no rotations)")
+    # Check if we have rotations or scales to apply
+    has_rotations = any(frame.get("rotations") for frame in frames)
+    has_scales = any(frame.get("scales") for frame in frames)
+
+    if len(frames) == 1 and not has_rotations and not has_scales:
+        print("Single frame bind pose - no rotations or scales")
         return
 
-    # Multi-frame animation would go here
-    # TODO: implement proper rotation animation for sequences
-    print(f"Multi-frame animation: {len(frames)} frames (not yet implemented)")
-    bpy.ops.object.mode_set(mode='OBJECT')
+    if has_rotations or has_scales:
+        print(f"Applying transforms ({rotation_mode} mode, {len(frames)} frames)")
+        print(f"  Rotations: {has_rotations}, Scales: {has_scales}")
+
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='POSE')
+
+        for frame_data in frames:
+            frame_idx = frame_data["frame"]
+            rotations = frame_data.get("rotations", {})
+            scales = frame_data.get("scales", {})
+
+            bpy.context.scene.frame_set(frame_idx)
+
+            for bone_name in set(rotations.keys()) | set(scales.keys()):
+                if bone_name not in armature.pose.bones:
+                    continue
+
+                pose_bone = armature.pose.bones[bone_name]
+
+                # Set rotation (quaternion: w, x, y, z)
+                if bone_name in rotations:
+                    rotation = rotations[bone_name]
+                    if len(rotation) == 4:
+                        quat = Quaternion((rotation[0], rotation[1], rotation[2], rotation[3]))
+                        pose_bone.rotation_mode = 'QUATERNION'
+                        pose_bone.rotation_quaternion = quat
+                        pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame_idx)
+
+                # Set scale (uniform scale along bone axis for length matching)
+                if bone_name in scales:
+                    scale_factor = scales[bone_name]
+                    # Scale along Y axis (bone direction in Blender)
+                    # Keep X and Z at 1.0 to preserve bone thickness
+                    pose_bone.scale = (1.0, scale_factor, 1.0)
+                    pose_bone.keyframe_insert(data_path="scale", frame=frame_idx)
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+    else:
+        print(f"No rotations or scales to apply")
 
 
 def create_mesh(name, vertices, faces, armature):
@@ -262,15 +298,23 @@ def main():
     people = data.get("people", [])
     fps = data.get("fps", 24)
     mesh_data = data.get("mesh")
+    rotation_mode = data.get("rotation_mode", "absolute")
+    bind_pose_positions = data.get("bind_pose_positions")
 
     if not people:
         print("No skeleton data found")
         sys.exit(1)
 
-    # Get first frame positions for rest pose
+    # Get positions for armature rest pose
     first_person = people[0]
     first_frame = first_person["frames"][0] if first_person.get("frames") else {}
-    first_positions = first_frame.get("positions", {})
+
+    # For bind mode, use bind pose positions; otherwise use first frame
+    if rotation_mode == "bind" and bind_pose_positions:
+        print("Using bind pose for armature rest pose")
+        first_positions = bind_pose_positions
+    else:
+        first_positions = first_frame.get("positions", {})
 
     if not first_positions:
         print("No position data found")
@@ -285,7 +329,8 @@ def main():
 
     # Set keyframes
     print("Setting keyframes...")
-    set_keyframes(armature, people, fps)
+    rotation_mode = data.get("rotation_mode", "absolute")
+    set_keyframes(armature, people, fps, rotation_mode)
 
     # Create mesh if provided
     if mesh_data:
