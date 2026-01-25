@@ -137,6 +137,7 @@ def main(args):
         outputs = estimator.process_one_image(
             img_rgb,
             bbox_thr=args.bbox_thresh,
+            mask_thr=args.mask_thresh,
             use_mask=args.use_mask,
             det_prompt=args.det_prompt,
         )
@@ -288,6 +289,12 @@ if __name__ == "__main__":
         default=0.3,
         type=float,
         help="Bounding box detection threshold",
+    )
+    parser.add_argument(
+        "--mask_thresh",
+        default=0.3,
+        type=float,
+        help="Mask/segmentation confidence threshold (SAM3 segmentor only)",
     )
     parser.add_argument(
         "--use_mask",

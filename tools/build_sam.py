@@ -90,8 +90,8 @@ def run_sam2(sam_predictor, img, boxes, **kwargs):
     return all_masks, all_scores
 
 
-def run_sam3(sam_predictor, img, boxes, det_prompt=None, **kwargs):
-    # switch bgr to rgb 
+def run_sam3(sam_predictor, img, boxes, det_prompt=None, mask_thr=0.3, **kwargs):
+    # switch bgr to rgb
     img = img[:, :, ::-1].copy()
     img = Image.fromarray(img.astype('uint8'), 'RGB')
     inference_state = sam_predictor.set_image(img)
@@ -101,8 +101,7 @@ def run_sam3(sam_predictor, img, boxes, det_prompt=None, **kwargs):
 
     # Get the masks, bounding boxes, and scores
     masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
-    score_threshold = 0.3
-    confident_idx = scores > score_threshold
+    confident_idx = scores > mask_thr
     masks = masks[confident_idx].float().squeeze(1).cpu().numpy()
     scores = scores[confident_idx].cpu().numpy()
 

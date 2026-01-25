@@ -44,7 +44,7 @@ python demo.py \
 code runs in this conda env: sam_3d_body
 
 ## Current working command with flags:
-python demo.py --image_folder ./data/samples --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt --mhr_path ./checkpoints/mhr_model.pt --detector_name sam3 --segmentor_name sam3 --use_mask --bbox_thresh 0.3 --debug --export_glb
+python demo.py --image_folder ./data/samples --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt --mhr_path ./checkpoints/mhr_model.pt --detector_name sam3 --segmentor_name sam3 --use_mask --bbox_thresh 0.3 --mask_thresh 0.3 --debug --export_glb
 
 ## Architecture
 
@@ -128,3 +128,29 @@ SAM3D_FOV_PATH      # Path to FOV model
 - `vis_utils.py` uses BGR (OpenCV format)
 - `json_export.py` and `skeleton_viewer.html` use RGB (Three.js format)
 - When porting colors between Python and web viewer, reverse the order: `[R,G,B]` ↔ `(B,G,R)`
+
+## Pipeline Thresholds
+
+- `--bbox_thresh` (default 0.3) - Human detector confidence threshold
+- `--mask_thresh` (default 0.3) - SAM3 segmentor confidence threshold
+- Pose estimator has no threshold - processes all detected boxes
+- MHR scale/shape params are learned (28 PCA → 68 bone lengths), no hard constraints
+
+## Retargeting Tools
+
+- `retarget_image.py` - Process image → mannequin pose JSON for Three.js viewer
+- `tools/retargeting/` - Retargeting module (MHR70 → mannequin joint mapping)
+- `tools/export_bind_pose_gltf.py` - Export bind pose skeleton as GLTF
+- `tools/export_bind_pose_usd.py` - Export bind pose skeleton as USD (for Maya)
+- `tools/blender_bind_pose_armature.py` - Blender script for FBX export
+
+### Blender Headless Export
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender --background --python tools/blender_bind_pose_armature.py -- --output output/skeleton.fbx --prefix bind_
+```
+
+## Gotchas
+
+- `HumanDetector` and `HumanSegmentor` require `path=""` parameter even for SAM3
+- Always activate conda: `conda activate sam_3d_body` before running scripts
+- MHR module requires float64, falls back to CPU on MPS (Apple Silicon)

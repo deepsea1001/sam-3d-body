@@ -70,6 +70,7 @@ class SAM3DBodyEstimator:
         det_cat_id: int = 0,
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
+        mask_thr: float = 0.3,
         use_mask: bool = False,
         det_prompt: Optional[str] = None,
         inference_type: str = "full",
@@ -84,6 +85,7 @@ class SAM3DBodyEstimator:
             det_cat_id: Detection category ID
             bbox_thr: Bounding box threshold
             nms_thr: NMS threshold
+            mask_thr: Mask/segmentation confidence threshold (SAM3 only)
             inference_type:
                 - full: full-body inference with both body and hand decoders
                 - body: inference with body decoder only (still full-body output)
@@ -153,8 +155,8 @@ class SAM3DBodyEstimator:
             use_mask = True
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
-            # Generate masks using SAM2
-            masks, masks_score = self.sam.run_sam(img, boxes, det_prompt=det_prompt)
+            # Generate masks using SAM2/SAM3
+            masks, masks_score = self.sam.run_sam(img, boxes, det_prompt=det_prompt, mask_thr=mask_thr)
             print(f"Generated {len(masks)} masks.")
             for i, score in enumerate(masks_score):
                 print(f"  - Mask {i}: confidence {score:.4f}")

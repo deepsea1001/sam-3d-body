@@ -128,3 +128,10 @@ output/.DS_Store
 data/.DS_Store
 data/samples/.DS_Store
 .DS_Store
+sam-3d-body.code-workspace
+data/.DS_Store
+.gitignore
+data/poses/default_poses.json
+data/samples/.DS_Store
+output/.DS_Store
+output/.DS_Store
