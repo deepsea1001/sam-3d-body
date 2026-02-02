@@ -160,6 +160,9 @@ class SAM3DBodyEstimator:
             print(f"Generated {len(masks)} masks.")
             for i, score in enumerate(masks_score):
                 print(f"  - Mask {i}: confidence {score:.4f}")
+            if len(masks) != len(boxes):
+                print(f"  Warning: mask count ({len(masks)}) != box count ({len(boxes)}). "
+                      f"Some detections will not have masks.")
         else:
             masks, masks_score = None, None
 
@@ -218,10 +221,10 @@ class SAM3DBodyEstimator:
                     "scale_params": out["scale"][idx],
                     "shape_params": out["shape"][idx],
                     "expr_params": out["face"][idx],
-                    "mask": masks[idx] if masks is not None else None,
+                    "mask": masks[idx] if masks is not None and idx < len(masks) else None,
                     "bbox_score": scores[idx] if scores is not None else 1.0,
-                    "mask_score": masks_score[idx] if masks_score is not None else None,
-                    "det_score": masks_score[idx] if masks_score is not None else scores[idx] if scores is not None else 1.0,
+                    "mask_score": masks_score[idx] if masks_score is not None and idx < len(masks_score) else None,
+                    "det_score": masks_score[idx] if masks_score is not None and idx < len(masks_score) else scores[idx] if scores is not None else 1.0,
                     "pred_joint_coords": out["pred_joint_coords"][idx],
                     "pred_global_rots": out["joint_global_rots"][idx],
                     "mhr_model_params": out["mhr_model_params"][idx],
