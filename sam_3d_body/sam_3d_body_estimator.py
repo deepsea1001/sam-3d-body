@@ -112,6 +112,9 @@ class SAM3DBodyEstimator:
 
         if bboxes is not None:
             boxes = bboxes.reshape(-1, 4)
+            # External boxes carry no detector confidence; downstream output
+            # falls back to 1.0 when scores is None.
+            scores = None
             self.is_crop = True
         elif self.detector is not None:
             if image_format == "rgb":
