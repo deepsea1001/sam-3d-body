@@ -538,8 +538,27 @@
 
             scene.add(skeletonGroup);
 
-            // Update camera target to skeleton center
-            controls.target.set(0, height * scale * 0.5, 0);
+            // Apply camera state if provided in data
+            if (data.camera_state) {
+                const camState = data.camera_state;
+                if (camState.position) {
+                    camera.position.set(
+                        camState.position.x || 0,
+                        camState.position.y || 1,
+                        camState.position.z || 3
+                    );
+                }
+                if (camState.target) {
+                    controls.target.set(
+                        camState.target.x || 0,
+                        camState.target.y || 1,
+                        camState.target.z || 0
+                    );
+                }
+            } else {
+                // Default: Update camera target to skeleton center
+                controls.target.set(0, height * scale * 0.5, 0);
+            }
             controls.update();
 
             // Update info with person count

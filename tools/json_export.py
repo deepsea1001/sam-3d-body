@@ -168,7 +168,11 @@ def export_multi_skeleton_json(keypoints_list, output_path, source_image=None):
         "people": people,
         "keypoint_names": MHR70_NAMES,
         "bones": bones,
-        "bone_colors": bone_colors
+        "bone_colors": bone_colors,
+        "camera_state": {
+            "position": {"x": 0, "y": 1, "z": 3},
+            "target": {"x": 0, "y": 1, "z": 0}
+        }
     }
 
     # Ensure output directory exists
@@ -230,7 +234,11 @@ def export_from_pipeline_outputs(outputs, output_path, source_image=None):
         "people": people,
         "keypoint_names": MHR70_NAMES,
         "bones": bones,
-        "bone_colors": bone_colors
+        "bone_colors": bone_colors,
+        "camera_state": {
+            "position": {"x": 0, "y": 1, "z": 3},
+            "target": {"x": 0, "y": 1, "z": 0}
+        }
     }
 
     # Ensure output directory exists
