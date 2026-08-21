@@ -162,7 +162,7 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     assert q["_x"] == pytest.approx(float(expected_pelvis_q[1]), abs=1e-9)
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
-    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 3
+    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 4
     # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
     # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
     # rejects it), so round-trip through parse_constant and make IT raise.

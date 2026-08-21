@@ -112,6 +112,178 @@ def _kabsch_q(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return QuaternionMath.from_matrix(vt.T @ np.diag([1.0, 1.0, d]) @ u.T)
 
 
+# Limb chains and their hinge sign, per the rig's own contract
+# (poseGoblin config/ik-config.js: every chain hingeAxis 'z';
+# config/joint-limits.js: elbow z [-148, 20] => flexion is LOCAL -Z,
+# knee z [-20.5, 151.5] => flexion is LOCAL +Z; Scott 2026-08-21: "Elbows
+# need to rotate around +/-Z. internal/external rotation of shoulder is X").
+# The hand-posed captures confirm it: every posed elbow/knee delta from rest
+# is Z-dominant to two decimals. sign s below maps the bend-plane normal
+# n = unit(u x f) onto the mid-joint's LOCAL +Z world image: rotating the
+# upper segment u onto the lower f is +theta about n; a flexion of -theta
+# about local +Z is +theta about -(local +Z), so elbows need +Z -> -n.
+_LIMB_CHAINS = (
+    ("left_shoulder", "left_elbow", "left_wrist", -1.0),
+    ("right_shoulder", "right_elbow", "right_wrist", -1.0),
+    ("left_hip", "left_knee", "left_ankle", +1.0),
+    ("right_hip", "right_knee", "right_ankle", +1.0),
+)
+_MIN_BEND_SIN = 0.05   # < ~3 deg bend: no stable bend plane; generic solve
+
+
+def _unit_or_none(v):
+    n = np.linalg.norm(v)
+    return None if n < _FRAME_EPS else np.asarray(v, float) / n
+
+
+def _axis_angle_q(axis, angle):
+    axis = np.asarray(axis, float)
+    h = angle / 2.0
+    return np.array([np.cos(h), *(np.sin(h) * axis)])
+
+
+def _twist_to_meet_cone(w, axis, f_t, c, prefer):
+    """Angle psi rotating w about *axis* so dot(rotated_w, f_t) == c.
+
+    Rotating the upper segment's swing brings the hinge to w; the remaining
+    freedom is twist about the segment (*axis*). A pure local-Z bend keeps
+    the hinge/lower-segment angle at its rest value (cos = c), so the twist
+    must land the hinge on that cone. Two solutions exist; the one whose
+    hinge lies on the anatomical bend side (max dot with *prefer*) wins.
+    Unreachable c is clamped to the nearest attainable value. Returns None
+    only when the geometry is degenerate."""
+    wpar = np.dot(w, axis) * axis
+    wperp = w - wpar
+    A_ = float(np.dot(wperp, f_t))
+    B_ = float(np.dot(np.cross(axis, wperp), f_t))
+    C_ = c - float(np.dot(wpar, f_t))
+    R = float(np.hypot(A_, B_))
+    if R < 1e-9:
+        return None
+    base = float(np.arctan2(B_, A_))
+    if abs(C_) <= R:
+        d = float(np.arccos(np.clip(C_ / R, -1.0, 1.0)))
+        cands = (base + d, base - d)
+    else:
+        cands = (base if C_ > 0 else base + np.pi,)
+    best, best_score = None, -2.0
+    for psi in cands:
+        h = QuaternionMath.rotate_vector(_axis_angle_q(axis, psi), w)
+        score = float(np.dot(h, prefer))
+        if score > best_score:
+            best, best_score = psi, score
+    return best
+
+
+def _pair_delta(a1, a2, b1, b2):
+    """World rotation mapping direction pair (a1, a2) exactly onto (b1, b2).
+
+    Orthonormal-frame alignment with Gram-Schmidt on the second vector of
+    each pair. Returns None when either pair is degenerate (second vector
+    parallel to the first) -- callers fall back to the generic solve rather
+    than fabricate an axis.
+    """
+    out = []
+    for v1, v2 in ((a1, a2), (b1, b2)):
+        e1 = np.asarray(v1, float)
+        n1 = np.linalg.norm(e1)
+        if n1 < _FRAME_EPS:
+            return None
+        e1 = e1 / n1
+        e2 = np.asarray(v2, float) - np.dot(v2, e1) * e1
+        n2 = np.linalg.norm(e2)
+        if n2 < 1e-3:
+            return None
+        e2 = e2 / n2
+        out.append(np.column_stack([e1, e2, np.cross(e1, e2)]))
+    return QuaternionMath.from_matrix(out[1] @ out[0].T)
+
+
+def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
+                   Wr: dict) -> dict[int, np.ndarray]:
+    """World deltas for the anchored bones: pelvis (hip frame), the four limb
+    chains (bend-plane hinge), the head (nose + eye line) and spine_2
+    (neck + clavicle line). Facing and twist become constraints here; the
+    generic per-bone direction solve cannot see either."""
+    li = rig.index_of_name
+    rest = rig.rest_world_p
+    A: dict[int, np.ndarray] = {}
+
+    if all(k in targets for k in (li["left_hip"], li["right_hip"], li["spine_1"])):
+        fr = _orthonormal_frame_from_hips_and_up(
+            rest, li["left_hip"], li["right_hip"], li["spine_1"])
+        ft = _orthonormal_frame_from_hips_and_up(
+            targets, li["left_hip"], li["right_hip"], li["spine_1"])
+        A[li["pelvis"]] = QuaternionMath.from_matrix(
+            np.column_stack(ft[:3]) @ np.column_stack(fr[:3]).T)
+
+    for root, mid, end, sgn in _LIMB_CHAINS:
+        ri, mi, ei = li[root], li[mid], li[end]
+        if not all(k in targets for k in (ri, mi, ei)):
+            continue
+        u_t = _unit_or_none(np.asarray(targets[mi], float) - np.asarray(targets[ri], float))
+        f_t = _unit_or_none(np.asarray(targets[ei], float) - np.asarray(targets[mi], float))
+        if u_t is None or f_t is None:
+            continue
+        n_raw = np.cross(u_t, f_t)
+        if np.linalg.norm(n_raw) < _MIN_BEND_SIN:
+            continue                      # near-straight limb: hinge undefined
+        prefer = sgn * n_raw / np.linalg.norm(n_raw)
+        u_r = _unit_or_none(rest[mi] - rest[ri])
+        f_r = _unit_or_none(rest[ei] - rest[mi])
+        z_r = QuaternionMath.rotate_vector(Wr[mi], np.array([0.0, 0.0, 1.0]))
+        if u_r is None or f_r is None:
+            continue
+        # The rig's own rest cone: the angle between the hinge and the lower
+        # segment is preserved by any pure-Z bend, so the shoulder/hip twist
+        # must place the hinge where the cone passes through the target.
+        c = float(np.dot(z_r, f_r))
+        swing = QuaternionMath.from_two_vectors(u_r, u_t)
+        w = QuaternionMath.rotate_vector(swing, z_r)
+        psi = _twist_to_meet_cone(w, u_t, f_t, c, prefer)
+        if psi is None:
+            d_root = _pair_delta(u_r, z_r, u_t, prefer)   # degenerate: frame fallback
+            d_mid = _pair_delta(f_r, z_r, f_t, prefer)
+            if d_root is not None:
+                A[ri] = d_root
+            if d_mid is not None:
+                A[mi] = d_mid
+            continue
+        d_root = QuaternionMath.multiply(_axis_angle_q(u_t, psi), swing)
+        h = QuaternionMath.rotate_vector(d_root, z_r)
+        a = QuaternionMath.rotate_vector(d_root, f_r)
+        a_p = a - np.dot(a, h) * h
+        b_p = f_t - np.dot(f_t, h) * h
+        na, nb = np.linalg.norm(a_p), np.linalg.norm(b_p)
+        if na < _FRAME_EPS or nb < _FRAME_EPS:
+            A[ri] = d_root
+            continue                      # forearm along hinge: bend angle undefined
+        a_p, b_p = a_p / na, b_p / nb
+        phi = float(np.arctan2(np.dot(h, np.cross(a_p, b_p)), np.dot(a_p, b_p)))
+        A[ri] = d_root
+        A[mi] = QuaternionMath.multiply(_axis_angle_q(h, phi), d_root)
+
+    hi, ni_ = li["head"], li["nose"]
+    le, re_ = li["left_eye"], li["right_eye"]
+    if all(k in targets for k in (hi, ni_, le, re_)):
+        d = _pair_delta(rest[ni_] - rest[hi], rest[le] - rest[re_],
+                        np.asarray(targets[ni_], float) - np.asarray(targets[hi], float),
+                        np.asarray(targets[le], float) - np.asarray(targets[re_], float))
+        if d is not None:
+            A[hi] = d
+
+    s2, nk = li["spine_2"], li["neck"]
+    lc, rc = li["left_clavicle"], li["right_clavicle"]
+    if all(k in targets for k in (s2, nk, lc, rc)):
+        d = _pair_delta(rest[nk] - rest[s2], rest[lc] - rest[rc],
+                        np.asarray(targets[nk], float) - np.asarray(targets[s2], float),
+                        np.asarray(targets[lc], float) - np.asarray(targets[rc], float))
+        if d is not None:
+            A[s2] = d
+
+    return A
+
+
 def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
     """Solve absolute local quaternions posing the rig onto *targets*.
 
@@ -135,24 +307,14 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
     solved = [i for i in rig.order if rig.solve[i]]
-    li = rig.index_of_name
-    # Pelvis facing is the nullspace of child-direction fitting: its three
-    # children (spine_1, hips) have |triple product| 0.165 -- nearly
-    # coplanar -- so Kabsch leaves facing to numerical accident. Anchor the
-    # pelvis to the hip frame instead: exact, and facing becomes a
-    # constraint. Same construction on both sides, so rest and target
-    # frames correspond structurally.
-    anchor_pelvis = all(k in targets
-                        for k in (li["left_hip"], li["right_hip"], li["spine_1"]))
+    # Anchored bones get exact frame deltas (facing and hinge twist are
+    # constraints there); everything else falls through to the generic
+    # child-direction solve below. See _anchor_deltas.
+    anchors = _anchor_deltas(rig, targets, Wr)
     D: dict = {}
     for n in solved:
-        if anchor_pelvis and n == li["pelvis"]:
-            fr = _orthonormal_frame_from_hips_and_up(
-                rig.rest_world_p, li["left_hip"], li["right_hip"], li["spine_1"])
-            ft = _orthonormal_frame_from_hips_and_up(
-                targets, li["left_hip"], li["right_hip"], li["spine_1"])
-            D[n] = QuaternionMath.from_matrix(
-                np.column_stack(ft[:3]) @ np.column_stack(fr[:3]).T)
+        if n in anchors:
+            D[n] = anchors[n]
             continue
         pairs = []
         if n in targets:
@@ -446,7 +608,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 3,
+        "retargetVersion": 4,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
