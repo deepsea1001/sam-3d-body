@@ -103,3 +103,66 @@ def fk_world_positions(rig: Rig, local_q: dict) -> dict:
         else:
             P[i] = P[p] + QuaternionMath.rotate_vector(Wq[p], rig.rest_local_p[i])
     return P
+
+
+def _kabsch_q(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Least-squares rotation (as [w,x,y,z]) taking unit rows a -> b."""
+    u, _s, vt = np.linalg.svd(a.T @ b)
+    d = float(np.sign(np.linalg.det(vt.T @ u.T))) or 1.0
+    return QuaternionMath.from_matrix(vt.T @ np.diag([1.0, 1.0, d]) @ u.T)
+
+
+def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+    """Solve absolute local quaternions posing the rig onto *targets*.
+
+    Per bone, a world DELTA D(b) rotates the rig's rest bone directions onto
+    the target directions: all-children Kabsch for >=2 usable children,
+    minimal rotation for exactly 1 (a single pair leaves twist unconstrained;
+    an SVD there would invent one), parent's delta when the bone or its
+    children have no targets. The consumer REPLACES locals, and most rig rest
+    locals are non-identity, so deltas are composed with the rest:
+
+        L(b) = (D(p) * Wr(p))^-1 * D(b) * Wr(b)      (root: D * Wr)
+
+    `targets` is keyed by bone INDEX (subset OK; world positions, Y-up).
+    Returns absolute local quaternions keyed by bone INDEX for the SOLVED set
+    only (see module docstring) -- fk_world_orientations/fk_world_positions
+    are themselves solved-set-only, so Wr below has no entries for unsolved
+    bones. `targets` may carry entries for unsolved bones; they are never
+    read, since no solved bone has an unsolved child (the finger/thumb
+    islands are disconnected at their captured parent: None roots). Unsolved
+    bones are Task 3's concern (rest locals, unchanged).
+    """
+    Wr = fk_world_orientations(rig, rig.rest_local_q)
+    solved = [i for i in rig.order if rig.solve[i]]
+    D: dict = {}
+    for n in solved:
+        pairs = []
+        if n in targets:
+            for c in rig.children[n]:
+                if c not in targets:
+                    continue
+                rb = rig.rest_world_p[c] - rig.rest_world_p[n]
+                tb = np.asarray(targets[c], float) - np.asarray(targets[n], float)
+                nr, nt = np.linalg.norm(rb), np.linalg.norm(tb)
+                if nr > 1e-6 and nt > 1e-6:
+                    pairs.append((rb / nr, tb / nt))
+        p = rig.parent[n]
+        if len(pairs) >= 2:
+            D[n] = _kabsch_q(np.array([x[0] for x in pairs]),
+                             np.array([x[1] for x in pairs]))
+        elif len(pairs) == 1:
+            D[n] = QuaternionMath.from_two_vectors(pairs[0][0], pairs[0][1])
+        else:
+            D[n] = D[p] if p is not None else QuaternionMath.identity()
+
+    L: dict = {}
+    for n in solved:
+        p = rig.parent[n]
+        wb = QuaternionMath.multiply(D[n], Wr[n])
+        if p is None:
+            L[n] = wb
+        else:
+            wp = QuaternionMath.multiply(D[p], Wr[p])
+            L[n] = QuaternionMath.multiply(QuaternionMath.conjugate(wp), wb)
+    return L

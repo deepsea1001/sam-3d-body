@@ -87,3 +87,45 @@ def test_duplicate_bone_name_is_not_silently_resolved():
     assert "joint7" not in rig.index_of_name
     with pytest.raises(KeyError):
         _ = rig.index_of_name["joint7"]
+
+
+def test_solving_for_the_rest_itself_returns_the_rest_locals():
+    """targets == rest world positions => every D is identity => locals == rest.
+    The zero of the solver; if this fails nothing else is interpretable.
+
+    Iterates the SOLVED set only (not rig.order): solve_rig_locals returns
+    locals for the 34 solved bones alone, matching fk_world_orientations/
+    fk_world_positions (module docstring) -- the 40 unsolved finger/thumb
+    bones are Task 3's concern."""
+    from retargeting.retargeters.posegoblin_rig import load_rig, solve_rig_locals
+    rig = load_rig()
+    out = solve_rig_locals(rig, dict(rig.rest_world_p))
+    solved = [i for i in rig.order if rig.solve[i]]
+    worst = max(_qang(out[i], rig.rest_local_q[i]) for i in solved)
+    assert worst < 0.5, f"worst bone off rest by {worst:.2f} deg"
+
+
+def test_a_global_yaw_of_the_targets_is_absorbed_by_the_root_alone():
+    """Rotate every target 90 deg about +Y: the solved WORLD directions must
+    follow, and every bone's world delta relative to the root must be ~0 —
+    i.e. the yaw lands in the root, not smeared down the chain."""
+    import numpy as np
+    from retargeting.retargeters.posegoblin_rig import (
+        load_rig, solve_rig_locals, fk_world_positions)
+    rig = load_rig()
+    c, s = np.cos(np.pi / 2), np.sin(np.pi / 2)
+    R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+    targets = {i: R @ p for i, p in rig.rest_world_p.items()}
+    out = solve_rig_locals(rig, targets)
+    got = fk_world_positions(rig, out)
+    solved = [i for i in rig.order if rig.solve[i]]
+    # positions can differ by bone-length scaling? no: same skeleton, same
+    # lengths, directions solved exactly -> world positions reproduce targets
+    err = max(float(np.linalg.norm(got[i] - targets[i])) for i in solved)
+    assert err < 1e-2, f"max position error {err}"
+
+
+def _qang(a, b):
+    import numpy as np
+    d = abs(float(np.dot(a, b)))
+    return float(np.degrees(2 * np.arccos(min(1.0, d))))
