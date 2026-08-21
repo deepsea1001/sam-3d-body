@@ -131,7 +131,6 @@ _LIMB_CHAINS = (
 _MIN_BEND_SIN = 0.05     # < ~3 deg bend: no stable bend plane; generic solve
 _PLANE_TRUST_SIN = 0.26  # < ~15 deg bend: plane too noisy for LEG twist; foot decides
 _SPINE1_SHARE = 0.65     # lumbar share of the pelvis->chest rotation (Scott's captures)
-_ANKLE_POINTED = 0.55    # |foot axis . shin| above this: aim the toe line, not the axis
 
 
 def _unit_or_none(v):
@@ -250,21 +249,7 @@ def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
                              - np.asarray(targets[hi], float))
     if axis_rest is None or axis_tgt is None:
         return None
-    # POINTED feet (foot axis nearly along the shin) read by their sole's
-    # roll, not by the axis -- and with only Z*X available the two cannot
-    # both be exact (Scott's 2026-08-22 report row: both branches left the
-    # toe line 48 deg off with the axis exact). So: aim the TOE LINE exactly
-    # when pointedness exceeds _ANKLE_POINTED, the foot axis otherwise, and
-    # let the un-aimed reference score the branch.
-    toe_rest = _unit_or_none(rest[bi] - rest[si])
-    toe_tgt = _unit_or_none(np.asarray(targets[bi], float)
-                            - np.asarray(targets[si], float))
-    shin = None
-    if p in targets and n in targets:
-        shin = _unit_or_none(np.asarray(targets[n], float) - np.asarray(targets[p], float))
-    pointed = abs(float(np.dot(axis_tgt, shin))) if shin is not None else 0.0
-    aim_toe = pointed > _ANKLE_POINTED and toe_rest is not None and toe_tgt is not None
-    v_w, u_w = (toe_rest, toe_tgt) if aim_toe else (axis_rest, axis_tgt)
+    v_w, u_w = axis_rest, axis_tgt
     pre = QuaternionMath.multiply(D[p], Wr[n])          # ankle frame before its own delta
     v = QuaternionMath.rotate_vector(QuaternionMath.conjugate(Wr[n]), v_w)
     u = QuaternionMath.rotate_vector(QuaternionMath.conjugate(pre), u_w)
@@ -274,13 +259,16 @@ def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
     phi0 = float(np.arctan2(v[1], v[2]))
     c = float(np.clip(u[2], -R, R))                     # unreachable pitch: clamp
     d = float(np.arccos(np.clip(c / R, -1.0, 1.0)))
-    # Both psi branches aim the foot axis exactly; they differ only in the
-    # roll they leave the sole with. The TOE LINE (big<->small toe) is the
-    # well-conditioned roll evidence -- it stays perpendicular to the foot
-    # axis no matter how pointed the foot is -- so it scores the branch,
-    # with the heel ray as a secondary vote. (The heel alone chose the
-    # mirrored roll on Scott's pointed-foot report of 2026-08-22: on a
-    # pointed foot the heel ray runs nearly along the leg and is noise.)
+    # Both psi branches aim the foot axis exactly; they are +/- mirrors of
+    # the sole's roll, scored by the toe-line + heel evidence. NOTE
+    # (2026-08-22): Scott reports the roll reads reversed on real images; a
+    # blanket branch inversion was tried and REJECTED -- it breaks the
+    # rest-roundtrip sanity (rest evidence is correct evidence), proving
+    # the rule cannot be a global flip. Resolution pending his A/B pick on
+    # live rows; see the session ledger.
+    toe_rest = _unit_or_none(rest[bi] - rest[si])
+    toe_tgt = _unit_or_none(np.asarray(targets[bi], float)
+                            - np.asarray(targets[si], float))
     heel_rest = _unit_or_none(rest[hi] - rest[n])
     heel_tgt = _unit_or_none(np.asarray(targets[hi], float)
                              - np.asarray(targets[n], float))
@@ -299,17 +287,13 @@ def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
         d_world = QuaternionMath.multiply(
             D[p], QuaternionMath.multiply(
                 Wr[n], QuaternionMath.multiply(delta, QuaternionMath.conjugate(Wr[n]))))
-        # score by whichever reference was NOT aimed, heel as a weak vote
         score = 0.0
-        sec_rest, sec_tgt = (axis_rest, axis_tgt) if aim_toe else (toe_rest, toe_tgt)
-        if sec_rest is not None and sec_tgt is not None:
+        if toe_rest is not None and toe_tgt is not None:
             score += float(np.dot(
-                QuaternionMath.rotate_vector(d_world, sec_rest), sec_tgt))
+                QuaternionMath.rotate_vector(d_world, toe_rest), toe_tgt))
         if heel_rest is not None and heel_tgt is not None:
             score += 0.25 * float(np.dot(
                 QuaternionMath.rotate_vector(d_world, heel_rest), heel_tgt))
-        if score == 0.0:
-            score = -abs(psi)                           # no roll data: least roll
         if best is None or score > best[0]:
             best = (score, d_world)
     return None if best is None else best[1]
@@ -822,7 +806,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 9,
+        "retargetVersion": 10,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
