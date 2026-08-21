@@ -67,6 +67,44 @@ class BaseRetargeter(ABC):
         """
         pass
 
+    def _fit_world_rotation(
+        self,
+        joint_name: str,
+        children: List[str],
+        current_positions: Dict[str, np.ndarray],
+        bind_dir: np.ndarray,
+        curr_dir: np.ndarray,
+    ) -> np.ndarray:
+        """World rotation for *joint_name*, fitted to every usable child.
+
+        With two or more children this is the least-squares rotation carrying
+        the children's bind directions onto their current ones (Kabsch/SVD).
+        With one it falls back to the minimal rotation ``bind_dir -> curr_dir``:
+        a single direction pair does not constrain the twist about itself, so
+        an SVD fit there would invent one and pass it to every descendant.
+        """
+        usable = []
+        for child in children:
+            if child not in current_positions or child not in self.bind_pose:
+                continue
+            b = self.bind_pose[child] - self.bind_pose[joint_name]
+            c = current_positions[child] - current_positions[joint_name]
+            nb, nc = np.linalg.norm(b), np.linalg.norm(c)
+            if nb < 1e-6 or nc < 1e-6:
+                continue
+            usable.append((b / nb, c / nc))
+
+        if len(usable) < 2:
+            return QuaternionMath.from_two_vectors(bind_dir, curr_dir)
+
+        a = np.array([u[0] for u in usable])
+        b = np.array([u[1] for u in usable])
+        u_, _s, vt = np.linalg.svd(a.T @ b)
+        # Reflection guard: without it a degenerate configuration can yield a
+        # determinant of -1, i.e. a mirrored "rotation".
+        d = np.sign(np.linalg.det(vt.T @ u_.T)) or 1.0
+        return QuaternionMath.from_matrix(vt.T @ np.diag([1.0, 1.0, d]) @ u_.T)
+
     def compute_rotations_and_scales(
         self, current_positions: Dict[str, np.ndarray]
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, float]]:
@@ -155,8 +193,14 @@ class BaseRetargeter(ABC):
                 parent_name, QuaternionMath.identity()
             )
 
-            # Compute world-space rotation from bind_dir to curr_dir
-            world_rot = QuaternionMath.from_two_vectors(bind_dir, curr_dir)
+            # Compute world-space rotation. A joint with several children is
+            # fitted to ALL of them: aiming only at the first leaves every
+            # other child unaimed, which in the MHR-70 rig is both hips
+            # (root's first child is spine1), both forearms (elbow's is
+            # olecranon) and both clavicle->shoulder (neck's is head).
+            world_rot = self._fit_world_rotation(
+                joint_name, children, current_positions, bind_dir, curr_dir
+            )
 
             # Local rotation = parent^-1 * world_rot
             parent_inv = QuaternionMath.conjugate(parent_world_rot)

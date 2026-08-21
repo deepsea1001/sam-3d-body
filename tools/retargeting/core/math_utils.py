@@ -109,6 +109,35 @@ class QuaternionMath:
         return quat / np.linalg.norm(quat)
 
     @staticmethod
+    def from_matrix(m: np.ndarray) -> np.ndarray:
+        """Rotation matrix -> quaternion [w, x, y, z] (Shepperd's method).
+
+        Branching on the largest diagonal term keeps the divisor away from
+        zero; the naive w-first form loses precision near 180 degrees.
+        """
+        m = np.asarray(m, dtype=float)
+        t = m[0, 0] + m[1, 1] + m[2, 2]
+        if t > 0.0:
+            s = 0.5 / np.sqrt(t + 1.0)
+            q = np.array([0.25 / s,
+                          (m[2, 1] - m[1, 2]) * s,
+                          (m[0, 2] - m[2, 0]) * s,
+                          (m[1, 0] - m[0, 1]) * s])
+        elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
+            q = np.array([(m[2, 1] - m[1, 2]) / s, 0.25 * s,
+                          (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s])
+        elif m[1, 1] > m[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
+            q = np.array([(m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s,
+                          0.25 * s, (m[1, 2] + m[2, 1]) / s])
+        else:
+            s = 2.0 * np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
+            q = np.array([(m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s,
+                          (m[1, 2] + m[2, 1]) / s, 0.25 * s])
+        return QuaternionMath.normalize(q)
+
+    @staticmethod
     def rotate_vector(q: np.ndarray, v: np.ndarray) -> np.ndarray:
         """Rotate vector v by quaternion q.
 
