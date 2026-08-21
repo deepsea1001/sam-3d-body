@@ -153,7 +153,14 @@ def test_ankle_roll_bias_applies_at_state_assembly():
             assert d * sign > 0.99, (
                 f"row{row_idx}/{side}: bias sign wrong (dot={d:+.3f}, want "
                 f"sign {'+' if sign > 0 else '-'})")
-    from retargeting.retargeters.posegoblin_rig import _ANKLE_ROLL_BIAS_DEG as B
-    check(0, "right", B - 3.0, B + 3.0, +1)   # Scott's calibration (currently 20)
-    check(0, "left", 0.0, 5.0, +1)            # planted: no bias
-    check(1, "left", B - 3.0, B + 3.0, -1)    # pointed left: mirrored sign
+    from retargeting.retargeters.posegoblin_rig import (
+        _ANKLE_ROLL_BIAS_DEG as B, _ANKLE_ROLL_ENABLED)
+    if _ANKLE_ROLL_ENABLED:
+        check(0, "right", B - 3.0, B + 3.0, +1)   # Scott's calibration
+        check(0, "left", 0.0, 5.0, +1)            # planted: no bias
+        check(1, "left", B - 3.0, B + 3.0, -1)    # pointed left: mirrored sign
+    else:
+        # Bias disabled (Scott 2026-08-22): state must equal the pure solve.
+        check(0, "right", 0.0, 1e-6, +1)
+        check(0, "left", 0.0, 1e-6, +1)
+        check(1, "left", 0.0, 1e-6, +1)

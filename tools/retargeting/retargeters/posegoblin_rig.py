@@ -137,6 +137,9 @@ _SPINE1_SHARE = 0.65     # lumbar share of the pelvis->chest rotation (Scott's c
 # pointedness so flat planted feet (long approved) stay untouched. Lives in
 # rig_state_from_mhr70, never in solve_rig_locals: the rest-roundtrip and
 # the machine gate stay pure. One-row calibration -- revisit per his eye.
+_ANKLE_ROLL_ENABLED = False   # DISABLED per Scott 2026-08-22 ("leave the code in
+                              # place") pending review of more pointed-toe poses;
+                              # flip to True to restore his calibration below.
 _ANKLE_ROLL_BIAS_DEG = 20.0   # Scott dialed down from his initial +30 ladder pick
 _ANKLE_ROLL_RAMP = (0.25, 0.60)   # pointedness: 0 bias below, full above
 
@@ -800,9 +803,9 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
 
     # Ankle roll bias (see _ANKLE_ROLL_BIAS_DEG above): applied here so the
     # pure solve stays bias-free.
-    Wr_all = fk_world_orientations(rig, rig.rest_local_q)
-    Wq = fk_world_orientations(rig, {**rig.rest_local_q, **solved})
-    for side in ("left", "right"):
+    Wr_all = None if not _ANKLE_ROLL_ENABLED else fk_world_orientations(rig, rig.rest_local_q)
+    Wq = None if Wr_all is None else fk_world_orientations(rig, {**rig.rest_local_q, **solved})
+    for side in ("left", "right") if _ANKLE_ROLL_ENABLED else ():
         ai = li[f"{side}_ankle"]
         ki, hi2 = rig.parent[ai], li[f"{side}_heel"]
         bi2, si2 = li[f"{side}_big_toe"], li[f"{side}_small_toe"]
@@ -882,7 +885,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 14,
+        "retargetVersion": 15,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
