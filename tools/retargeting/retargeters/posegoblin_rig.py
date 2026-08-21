@@ -430,7 +430,35 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
     # (its world anchor above is untouched).
     pv = li["pelvis"]
     if pv in A and s2 in A:
-        A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
+        # Split only the SWING (pitch + lateral) of the pelvis->chest
+        # rotation; keep its TWIST about the torso axis concentrated at the
+        # chest, as the pre-split solve did. Both anchors take their
+        # vertical from the same hipmid->neck chord (no mid-spine keypoints
+        # exist), so their relative rotation is dominated by hips-vs-
+        # clavicles TWIST -- and distributing twist along the column
+        # corkscrews it (Scott's crow-pose report: 59.5 deg about -Y read
+        # as an arch bending backwards). Swing alone curves the column the
+        # way flexion looks.
+        r_rel = QuaternionMath.multiply(QuaternionMath.conjugate(A[pv]), A[s2])
+        if r_rel[0] < 0:
+            r_rel = -np.asarray(r_rel, float)
+        chord = _unit_or_none(np.asarray(targets[nk], float)
+                              - 0.5 * (np.asarray(targets[li["left_hip"]], float)
+                                       + np.asarray(targets[li["right_hip"]], float)))
+        if chord is not None:
+            axis_p = QuaternionMath.rotate_vector(QuaternionMath.conjugate(A[pv]), chord)
+            d_par = float(np.dot(r_rel[1:], axis_p))
+            tw = np.array([r_rel[0], *(d_par * np.asarray(axis_p, float))])
+            ntw = np.linalg.norm(tw)
+            if ntw > 1e-9:
+                tw = tw / ntw
+                swing = QuaternionMath.multiply(r_rel, QuaternionMath.conjugate(tw))
+                part = _slerp(np.array([1.0, 0.0, 0.0, 0.0]), swing, _SPINE1_SHARE)
+                A[li["spine_1"]] = QuaternionMath.multiply(A[pv], part)
+            else:
+                A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
+        else:
+            A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
@@ -806,7 +834,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 10,
+        "retargetVersion": 11,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
