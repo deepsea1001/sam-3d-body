@@ -1,0 +1,1491 @@
+{
+ "version": "posegoblin_rig_v1",
+ "provenance": {
+  "captured": "2026-08-21",
+  "source": "capture-rigrest-02.json",
+  "rig_model": "models/a7f3e1d2b9c4.dat",
+  "note": "live PoseGoblinElement, base pose recalled first"
+ },
+ "bones": [
+  {
+   "name": "pelvis",
+   "parent": null,
+   "rest_local_q": [
+    0.707107,
+    -0.707107,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    10.478579,
+    0
+   ],
+   "rest_world_p": [
+    0,
+    10.478579,
+    0
+   ]
+  },
+  {
+   "name": "spine_1",
+   "parent": "pelvis",
+   "rest_local_q": [
+    0.702683,
+    0.702683,
+    0.078971,
+    0.078971
+   ],
+   "rest_local_p": [
+    0,
+    -0.195653,
+    1.126156
+   ],
+   "rest_world_p": [
+    0,
+    11.604735,
+    0.195653
+   ]
+  },
+  {
+   "name": "spine_2",
+   "parent": "spine_1",
+   "rest_local_q": [
+    0.998185,
+    0,
+    0.060226,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    1.374257,
+    0.110878
+   ],
+   "rest_world_p": [
+    0.024611,
+    12.978992,
+    0.303765
+   ]
+  },
+  {
+   "name": "neck",
+   "parent": "spine_2",
+   "rest_local_q": [
+    0.705541,
+    -0.047029,
+    0.047029,
+    0.705541
+   ],
+   "rest_local_p": [
+    0,
+    2.774204,
+    -0.329422
+   ],
+   "rest_world_p": [
+    -0.086599,
+    15.753196,
+    -0.006318
+   ]
+  },
+  {
+   "name": "head",
+   "parent": "neck",
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    1.165598,
+    0,
+    0.172065
+   ],
+   "rest_world_p": [
+    -0.081251,
+    16.931319,
+    0.008593
+   ]
+  },
+  {
+   "name": "nose",
+   "parent": "head",
+   "rest_local_q": [
+    0.707107,
+    0,
+    0,
+    -0.707107
+   ],
+   "rest_local_p": [
+    -0.067848,
+    0,
+    1.232761
+   ],
+   "rest_world_p": [
+    0.334276,
+    17.027687,
+    1.167193
+   ]
+  },
+  {
+   "name": "left_eye",
+   "parent": "nose",
+   "rest_local_q": [
+    0.985001,
+    0,
+    0,
+    -0.17255
+   ],
+   "rest_local_p": [
+    0.369657,
+    0.480101,
+    -0.184365
+   ],
+   "rest_world_p": [
+    0.599032,
+    17.479071,
+    0.810414
+   ]
+  },
+  {
+   "name": "left_ear",
+   "parent": "left_eye",
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.403948,
+    0.136991,
+    -1.049557
+   ],
+   "rest_world_p": [
+    0.649649,
+    17.331369,
+    -0.311697
+   ]
+  },
+  {
+   "name": "right_eye",
+   "parent": "nose",
+   "rest_local_q": [
+    0,
+    0.985001,
+    0.17255,
+    0
+   ],
+   "rest_local_p": [
+    -0.369657,
+    0.480129,
+    -0.184362
+   ],
+   "rest_world_p": [
+    -0.09688,
+    17.4791,
+    1.06
+   ]
+  },
+  {
+   "name": "right_ear",
+   "parent": "right_eye",
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -0.403947,
+    -0.136994,
+    1.049557
+   ],
+   "rest_world_p": [
+    -0.849111,
+    17.3314,
+    0.225828
+   ]
+  },
+  {
+   "name": "left_clavicle",
+   "parent": "spine_2",
+   "rest_local_q": [
+    0.707107,
+    -0.707107,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.231957,
+    2.506994,
+    -0.026351
+   ],
+   "rest_world_p": [
+    0.234055,
+    15.485986,
+    0.200654
+   ]
+  },
+  {
+   "name": "left_shoulder",
+   "parent": "left_clavicle",
+   "rest_local_q": [
+    0.053603,
+    -0.945759,
+    -0.208003,
+    0.243725
+   ],
+   "rest_local_p": [
+    1.414637,
+    0.525905,
+    -0.581567
+   ],
+   "rest_world_p": [
+    1.388102,
+    14.904419,
+    -0.771945
+   ]
+  },
+  {
+   "name": "left_elbow",
+   "parent": "left_shoulder",
+   "rest_local_q": [
+    0.004332,
+    0.980258,
+    0.196492,
+    0.021613
+   ],
+   "rest_local_p": [
+    2.863699,
+    0.13885,
+    0.011073
+   ],
+   "rest_world_p": [
+    3.210082,
+    13.610234,
+    -2.567954
+   ]
+  },
+  {
+   "name": "left_wrist",
+   "parent": "left_elbow",
+   "rest_local_q": [
+    0.530223,
+    0.530223,
+    -0.467828,
+    0.467828
+   ],
+   "rest_local_p": [
+    2.788806,
+    -0.460185,
+    -0.004846
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ]
+  },
+  {
+   "name": "left_thumb_1",
+   "parent": null,
+   "rest_local_q": [
+    0.937867,
+    0.264995,
+    -0.0396,
+    0.220489
+   ],
+   "rest_local_p": [
+    -3.163619,
+    2.903607,
+    1.424599
+   ],
+   "rest_world_p": [
+    5.855567,
+    11.901008,
+    -2.783403
+   ]
+  },
+  {
+   "name": "left_thumb_2",
+   "parent": "left_thumb_1",
+   "rest_local_q": [
+    0.976371,
+    -0.008907,
+    0.000545,
+    -0.215916
+   ],
+   "rest_local_p": [
+    0,
+    4.187095,
+    0
+   ],
+   "rest_world_p": [
+    6.076672,
+    11.57208,
+    -2.648359
+   ]
+  },
+  {
+   "name": "left_thumb_3",
+   "parent": "left_thumb_2",
+   "rest_local_q": [
+    0.999162,
+    -3e-05,
+    0.000745,
+    -0.040932
+   ],
+   "rest_local_p": [
+    0,
+    3.418388,
+    0
+   ],
+   "rest_world_p": [
+    6.239148,
+    11.273161,
+    -2.681564
+   ]
+  },
+  {
+   "name": "left_thumb_tip",
+   "parent": "left_thumb_3",
+   "rest_local_q": [
+    0.991558,
+    0.005153,
+    0.122683,
+    0.041652
+   ],
+   "rest_local_p": [
+    0,
+    2.580581,
+    0
+   ],
+   "rest_world_p": [
+    6.355833,
+    11.047499,
+    -2.726897
+   ]
+  },
+  {
+   "name": "left_index_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.988073,
+    0.153873,
+    0.000297,
+    -0.005848
+   ],
+   "rest_local_p": [
+    -2.741751,
+    9.546771,
+    0.36644
+   ],
+   "rest_world_p": [
+    6.439572,
+    11.646489,
+    -3.003519
+   ]
+  },
+  {
+   "name": "left_index_finger_2",
+   "parent": "left_index_finger_1",
+   "rest_local_q": [
+    0.984011,
+    0.17811,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.7,
+    0
+   ],
+   "rest_world_p": [
+    6.673739,
+    11.368001,
+    -3.070675
+   ]
+  },
+  {
+   "name": "left_index_finger_3",
+   "parent": "left_index_finger_2",
+   "rest_local_q": [
+    0.985846,
+    0.167655,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.85,
+    0
+   ],
+   "rest_world_p": [
+    6.771927,
+    11.101416,
+    -3.093405
+   ]
+  },
+  {
+   "name": "left_index_finger_tip",
+   "parent": "left_index_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.000377,
+    3e-05
+   ],
+   "rest_local_p": [
+    0,
+    2.774866,
+    0
+   ],
+   "rest_world_p": [
+    6.780971,
+    10.824167,
+    -3.086342
+   ]
+  },
+  {
+   "name": "left_middle_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.986324,
+    0.164818,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -0.481925,
+    9.970863,
+    -0.151627
+   ],
+   "rest_world_p": [
+    6.430475,
+    11.659308,
+    -3.238686
+   ]
+  },
+  {
+   "name": "left_middle_finger_2",
+   "parent": "left_middle_finger_1",
+   "rest_local_q": [
+    0.984378,
+    0.176069,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.7,
+    0
+   ],
+   "rest_world_p": [
+    6.660105,
+    11.375661,
+    -3.299629
+   ]
+  },
+  {
+   "name": "left_middle_finger_3",
+   "parent": "left_middle_finger_2",
+   "rest_local_q": [
+    0.986526,
+    0.163604,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.95,
+    0
+   ],
+   "rest_world_p": [
+    6.757963,
+    11.098013,
+    -3.31862
+   ]
+  },
+  {
+   "name": "left_middle_finger_tip",
+   "parent": "left_middle_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.001014,
+    0.000143
+   ],
+   "rest_local_p": [
+    0,
+    2.952863,
+    0
+   ],
+   "rest_world_p": [
+    6.765576,
+    10.803019,
+    -3.307926
+   ]
+  },
+  {
+   "name": "left_ring_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.985145,
+    0.171337,
+    -0.011417,
+    0.001714
+   ],
+   "rest_local_p": [
+    1.383193,
+    9.54199,
+    -0.108566
+   ],
+   "rest_world_p": [
+    6.336302,
+    11.669883,
+    -3.405011
+   ]
+  },
+  {
+   "name": "left_ring_finger_2",
+   "parent": "left_ring_finger_1",
+   "rest_local_q": [
+    0.984707,
+    0.174217,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.15,
+    0
+   ],
+   "rest_world_p": [
+    6.529479,
+    11.425866,
+    -3.453626
+   ]
+  },
+  {
+   "name": "left_ring_finger_3",
+   "parent": "left_ring_finger_2",
+   "rest_local_q": [
+    0.986381,
+    0.164477,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    3e-06,
+    2.95,
+    1e-06
+   ],
+   "rest_world_p": [
+    6.626151,
+    11.147514,
+    -3.467753
+   ]
+  },
+  {
+   "name": "left_ring_finger_tip",
+   "parent": "left_ring_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    0.000492,
+    -4e-05
+   ],
+   "rest_local_p": [
+    -2.3e-05,
+    2.644316,
+    -1e-06
+   ],
+   "rest_world_p": [
+    6.631733,
+    10.883589,
+    -3.452383
+   ]
+  },
+  {
+   "name": "left_pinky_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.985934,
+    0.166306,
+    -0.013629,
+    0.009487
+   ],
+   "rest_local_p": [
+    3.324375,
+    8.515241,
+    0.335283
+   ],
+   "rest_world_p": [
+    6.171384,
+    11.676752,
+    -3.5565
+   ]
+  },
+  {
+   "name": "left_pinky_finger_2",
+   "parent": "left_pinky_finger_1",
+   "rest_local_q": [
+    0.984552,
+    0.175092,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.6,
+    0
+   ],
+   "rest_world_p": [
+    6.396573,
+    11.400558,
+    -3.607558
+   ]
+  },
+  {
+   "name": "left_pinky_finger_3",
+   "parent": "left_pinky_finger_2",
+   "rest_local_q": [
+    0.987291,
+    0.158924,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.1,
+    0
+   ],
+   "rest_world_p": [
+    6.467962,
+    11.203206,
+    -3.615024
+   ]
+  },
+  {
+   "name": "left_pinky_finger_tip",
+   "parent": "left_pinky_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.000812,
+    -0.000205
+   ],
+   "rest_local_p": [
+    0,
+    2.125531,
+    0
+   ],
+   "rest_world_p": [
+    6.477287,
+    10.991307,
+    -3.601217
+   ]
+  },
+  {
+   "name": "right_clavicle",
+   "parent": "spine_2",
+   "rest_local_q": [
+    0.706113,
+    0.706113,
+    -0.037484,
+    -0.037484
+   ],
+   "rest_local_p": [
+    -0.231957,
+    2.507008,
+    -0.026351
+   ],
+   "rest_world_p": [
+    -0.202624,
+    15.486,
+    0.357268
+   ]
+  },
+  {
+   "name": "right_shoulder",
+   "parent": "right_clavicle",
+   "rest_local_q": [
+    0.142068,
+    0.909894,
+    -0.362323,
+    0.143636
+   ],
+   "rest_local_p": [
+    -1.414633,
+    -0.525905,
+    0.5816
+   ],
+   "rest_world_p": [
+    -1.762226,
+    15.05744,
+    0.357908
+   ]
+  },
+  {
+   "name": "right_elbow",
+   "parent": "right_shoulder",
+   "rest_local_q": [
+    -0.00796,
+    -0.9323,
+    -0.361013,
+    -0.020555
+   ],
+   "rest_local_p": [
+    -2.863717,
+    -0.13885,
+    -0.011072
+   ],
+   "rest_world_p": [
+    -2.801836,
+    16.307114,
+    2.719645
+   ]
+  },
+  {
+   "name": "right_wrist",
+   "parent": "right_elbow",
+   "rest_local_q": [
+    0.407297,
+    0.407297,
+    -0.578022,
+    0.578022
+   ],
+   "rest_local_p": [
+    -2.788771,
+    0.460185,
+    0.00484
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ]
+  },
+  {
+   "name": "right_thumb_1",
+   "parent": null,
+   "rest_local_q": [
+    0.926522,
+    0.320792,
+    0.067293,
+    0.184718
+   ],
+   "rest_local_p": [
+    3.163623,
+    -2.903589,
+    -1.42458
+   ],
+   "rest_world_p": [
+    -1.099989,
+    17.196306,
+    5.265201
+   ]
+  },
+  {
+   "name": "right_thumb_2",
+   "parent": "right_thumb_1",
+   "rest_local_q": [
+    0.966008,
+    -0.051549,
+    0.002419,
+    -0.253309
+   ],
+   "rest_local_p": [
+    1.1e-05,
+    -4.187064,
+    1.1e-05
+   ],
+   "rest_world_p": [
+    -0.850915,
+    17.204057,
+    5.601679
+   ]
+  },
+  {
+   "name": "right_thumb_3",
+   "parent": "right_thumb_2",
+   "rest_local_q": [
+    0.970809,
+    -0.000179,
+    0.000723,
+    -0.239851
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.418415,
+    -4.4e-05
+   ],
+   "rest_world_p": [
+    -0.775986,
+    17.326488,
+    5.911924
+   ]
+  },
+  {
+   "name": "right_thumb_tip",
+   "parent": "right_thumb_3",
+   "rest_local_q": [
+    0.991558,
+    0.005153,
+    0.122683,
+    0.041652
+   ],
+   "rest_local_p": [
+    -6e-06,
+    -2.5806,
+    -9e-06
+   ],
+   "rest_world_p": [
+    -0.834244,
+    17.460028,
+    6.124921
+   ]
+  },
+  {
+   "name": "right_index_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.936029,
+    0.350247,
+    0.001741,
+    -0.034257
+   ],
+   "rest_local_p": [
+    2.741756,
+    -9.54673,
+    -0.366487
+   ],
+   "rest_world_p": [
+    -0.877902,
+    17.742905,
+    5.591077
+   ]
+  },
+  {
+   "name": "right_index_finger_2",
+   "parent": "right_index_finger_1",
+   "rest_local_q": [
+    0.875974,
+    0.482358,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.699972,
+    2e-05
+   ],
+   "rest_world_p": [
+    -0.776635,
+    17.784242,
+    5.944538
+   ]
+  },
+  {
+   "name": "right_index_finger_3",
+   "parent": "right_index_finger_2",
+   "rest_local_q": [
+    0.904517,
+    0.426437,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1.1e-05,
+    -2.850096,
+    3e-06
+   ],
+   "rest_world_p": [
+    -0.784612,
+    17.569253,
+    6.131478
+   ]
+  },
+  {
+   "name": "right_index_finger_tip",
+   "parent": "right_index_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.000377,
+    3e-05
+   ],
+   "rest_local_p": [
+    5e-06,
+    -2.774783,
+    -1e-05
+   ],
+   "rest_world_p": [
+    -0.86267,
+    17.305612,
+    6.094132
+   ]
+  },
+  {
+   "name": "right_middle_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.911643,
+    0.410982,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.481923,
+    -9.970817,
+    0.151658
+   ],
+   "rest_world_p": [
+    -1.070273,
+    17.868015,
+    5.64486
+   ]
+  },
+  {
+   "name": "right_middle_finger_2",
+   "parent": "right_middle_finger_1",
+   "rest_local_q": [
+    0.881823,
+    0.47158,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    1e-06,
+    -3.700081,
+    -6.5e-05
+   ],
+   "rest_world_p": [
+    -0.958514,
+    17.856529,
+    5.997399
+   ]
+  },
+  {
+   "name": "right_middle_finger_3",
+   "parent": "right_middle_finger_2",
+   "rest_local_q": [
+    0.91461,
+    0.404338,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.949962,
+    -3e-06
+   ],
+   "rest_world_p": [
+    -0.974613,
+    17.615386,
+    6.166555
+   ]
+  },
+  {
+   "name": "right_middle_finger_tip",
+   "parent": "right_middle_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.001014,
+    0.000143
+   ],
+   "rest_local_p": [
+    8e-06,
+    -2.952826,
+    2.5e-05
+   ],
+   "rest_world_p": [
+    -1.07273,
+    17.3419,
+    6.113923
+   ]
+  },
+  {
+   "name": "right_ring_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.892606,
+    0.445846,
+    -0.066164,
+    0.00993
+   ],
+   "rest_local_p": [
+    -1.383193,
+    -9.541931,
+    0.108606
+   ],
+   "rest_world_p": [
+    -1.257898,
+    17.885633,
+    5.678492
+   ]
+  },
+  {
+   "name": "right_ring_finger_2",
+   "parent": "right_ring_finger_1",
+   "rest_local_q": [
+    0.887019,
+    0.461734,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    2e-06,
+    -3.150082,
+    -8.4e-05
+   ],
+   "rest_world_p": [
+    -1.147489,
+    17.846663,
+    5.970933
+   ]
+  },
+  {
+   "name": "right_ring_finger_3",
+   "parent": "right_ring_finger_2",
+   "rest_local_q": [
+    0.912483,
+    0.409116,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.949962,
+    -8e-06
+   ],
+   "rest_world_p": [
+    -1.134053,
+    17.588914,
+    6.113788
+   ]
+  },
+  {
+   "name": "right_ring_finger_tip",
+   "parent": "right_ring_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    0.000492,
+    -4e-05
+   ],
+   "rest_local_p": [
+    2.2e-05,
+    -2.644361,
+    4.2e-05
+   ],
+   "rest_world_p": [
+    -1.204221,
+    17.344222,
+    6.042172
+   ]
+  },
+  {
+   "name": "right_pinky_finger_1",
+   "parent": null,
+   "rest_local_q": [
+    0.903238,
+    0.418157,
+    -0.079176,
+    0.055114
+   ],
+   "rest_local_p": [
+    -3.324374,
+    -8.51522,
+    -0.335253
+   ],
+   "rest_world_p": [
+    -1.474434,
+    17.83697,
+    5.709105
+   ]
+  },
+  {
+   "name": "right_pinky_finger_2",
+   "parent": "right_pinky_finger_1",
+   "rest_local_q": [
+    0.884579,
+    0.46639,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.599989,
+    -6.1e-05
+   ],
+   "rest_world_p": [
+    -1.313724,
+    17.805739,
+    6.029724
+   ]
+  },
+  {
+   "name": "right_pinky_finger_3",
+   "parent": "right_pinky_finger_2",
+   "rest_local_q": [
+    0.925592,
+    0.378523,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -4e-06,
+    -2.100059,
+    3.7e-05
+   ],
+   "rest_world_p": [
+    -1.292932,
+    17.625184,
+    6.134938
+   ]
+  },
+  {
+   "name": "right_pinky_finger_tip",
+   "parent": "right_pinky_finger_3",
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.000812,
+    -0.000205
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.125528,
+    1.4e-05
+   ],
+   "rest_world_p": [
+    -1.348404,
+    17.422783,
+    6.101242
+   ]
+  },
+  {
+   "name": "left_hip",
+   "parent": "pelvis",
+   "rest_local_q": [
+    0.701867,
+    -0.085926,
+    0.701867,
+    -0.085926
+   ],
+   "rest_local_p": [
+    1.166667,
+    0,
+    -0.891785
+   ],
+   "rest_world_p": [
+    1.166667,
+    9.586793,
+    0
+   ]
+  },
+  {
+   "name": "left_knee",
+   "parent": "left_hip",
+   "rest_local_q": [
+    0.990337,
+    0,
+    0,
+    0.138683
+   ],
+   "rest_local_p": [
+    4.330096,
+    -0.166667,
+    0
+   ],
+   "rest_world_p": [
+    1.166667,
+    5.424785,
+    1.206315
+   ]
+  },
+  {
+   "name": "left_ankle",
+   "parent": "left_knee",
+   "rest_local_q": [
+    0.99142,
+    -0.130716,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4.394251,
+    0.142225,
+    0
+   ],
+   "rest_world_p": [
+    1.166667,
+    1.038092,
+    0.912053
+   ]
+  },
+  {
+   "name": "left_toes",
+   "parent": "left_ankle",
+   "rest_local_q": [
+    0.5,
+    0.5,
+    -0.5,
+    0.5
+   ],
+   "rest_local_p": [
+    0.529113,
+    -0.985555,
+    -0.10466
+   ],
+   "rest_world_p": [
+    1.321027,
+    0.475404,
+    1.872152
+   ]
+  },
+  {
+   "name": "left_big_toe",
+   "parent": "left_toes",
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    -0.469529,
+    -0.066581,
+    0.603027
+   ],
+   "rest_world_p": [
+    1.023841,
+    0.384488,
+    2.573541
+   ]
+  },
+  {
+   "name": "left_small_toe",
+   "parent": "left_toes",
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    0.321466,
+    -0.061259,
+    0.480428
+   ],
+   "rest_world_p": [
+    1.756029,
+    0.401003,
+    2.250493
+   ]
+  },
+  {
+   "name": "left_heel",
+   "parent": "left_ankle",
+   "rest_local_q": [
+    -0.125107,
+    0.94888,
+    0.037879,
+    -0.287298
+   ],
+   "rest_local_p": [
+    0.573324,
+    0.626491,
+    0.168124
+   ],
+   "rest_world_p": [
+    1.166667,
+    0.487567,
+    0.243937
+   ]
+  },
+  {
+   "name": "joint7",
+   "parent": "left_heel",
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -2e-06,
+    0,
+    -3e-06
+   ],
+   "rest_world_p": [
+    1.16667,
+    0.487567,
+    0.243937
+   ]
+  },
+  {
+   "name": "right_hip",
+   "parent": "pelvis",
+   "rest_local_q": [
+    -0.194479,
+    0.667784,
+    -0.201823,
+    0.689572
+   ],
+   "rest_local_p": [
+    -1.16667,
+    0,
+    -0.891789
+   ],
+   "rest_world_p": [
+    -1.16667,
+    9.58679,
+    0
+   ]
+  },
+  {
+   "name": "right_knee",
+   "parent": "right_hip",
+   "rest_local_q": [
+    0.988321,
+    0,
+    0,
+    0.152388
+   ],
+   "rest_local_p": [
+    -4.33009,
+    0.166667,
+    0
+   ],
+   "rest_world_p": [
+    -1.026232,
+    5.849137,
+    -2.188078
+   ]
+  },
+  {
+   "name": "right_ankle",
+   "parent": "right_knee",
+   "rest_local_q": [
+    0.878735,
+    -0.267701,
+    -0.013248,
+    0.394951
+   ],
+   "rest_local_p": [
+    -4.394253,
+    -0.142226,
+    0
+   ],
+   "rest_world_p": [
+    -0.889563,
+    3.140334,
+    -5.648337
+   ]
+  },
+  {
+   "name": "right_toes",
+   "parent": "right_ankle",
+   "rest_local_q": [
+    0.5,
+    0.5,
+    -0.5,
+    0.5
+   ],
+   "rest_local_p": [
+    -0.529114,
+    0.985552,
+    0.10466
+   ],
+   "rest_world_p": [
+    -1.13896,
+    2.285387,
+    -6.333242
+   ]
+  },
+  {
+   "name": "right_big_toe",
+   "parent": "right_toes",
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    0.469533,
+    0.066581,
+    -0.60303
+   ],
+   "rest_world_p": [
+    -0.992314,
+    1.541275,
+    -6.448709
+   ]
+  },
+  {
+   "name": "right_small_toe",
+   "parent": "right_toes",
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    -0.321464,
+    0.061259,
+    -0.480427
+   ],
+   "rest_world_p": [
+    -1.623591,
+    2.027575,
+    -6.52447
+   ]
+  },
+  {
+   "name": "right_heel",
+   "parent": "right_ankle",
+   "rest_local_q": [
+    -0.125107,
+    0.94888,
+    0.037879,
+    -0.287298
+   ],
+   "rest_local_p": [
+    -0.573324,
+    -0.626491,
+    -0.168124
+   ],
+   "rest_world_p": [
+    -0.633841,
+    3.825185,
+    -6.112063
+   ]
+  },
+  {
+   "name": "joint7",
+   "parent": "right_heel",
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    0,
+    0
+   ],
+   "rest_world_p": [
+    -0.633841,
+    3.825185,
+    -6.112063
+   ]
+  }
+ ]
+}
