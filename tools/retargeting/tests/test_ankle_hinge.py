@@ -92,3 +92,58 @@ def test_solved_ankle_reproduces_the_target_foot_axis():
                 f"{row['tag']}/{side}_ankle: foot axis off by "
                 f"{np.degrees(np.arccos(np.clip(cos, -1, 1))):.1f} deg")
     assert checked >= 8, f"positive control: only {checked} feet checked"
+
+
+def test_ankle_roll_bias_applies_at_state_assembly():
+    """Scott's calibration (2026-08-22): from the roll ladder on row
+    c5cf2013 he picked +30 deg about the foot axis. The detector's foot
+    labels carry a roll bias only an eye can calibrate; the correction
+    ramps with pointedness (flat planted feet -- long approved -- stay
+    untouched) and lives in rig_state_from_mhr70, NOT solve_rig_locals,
+    so the rest-roundtrip and the machine gate stay pure."""
+    from retargeting.retargeters.posegoblin_rig import rig_state_from_mhr70
+    REG = json.loads(
+        (Path(__file__).parent / "fixtures" / "regression_rows.json").read_text())
+    kp = np.asarray(REG[0]["kp70"], np.float32).reshape(70, 3)
+    T = rig_targets_from_mhr70(kp)
+    L = solve_rig_locals(RIG, T)          # pure solve, no bias
+    st = rig_state_from_mhr70(kp)         # assembled state, bias applied
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+
+    def wdelta_from(locals_by, ai, name_keyed):
+        w = None
+        chain = []
+        j = ai
+        while j is not None:
+            chain.append(j)
+            j = RIG.parent[j]
+        for j in reversed(chain):
+            if name_keyed:
+                q4 = locals_by[RIG.name[j]]
+                q = np.array([q4["_w"], q4["_x"], q4["_y"], q4["_z"]], float)
+            else:
+                q = np.asarray(locals_by[j], float)
+            w = q if w is None else QM.multiply(w, q)
+        return QM.multiply(w, conj(Wr[ai]))
+
+    expected = {"right": (26.0, 32.0),    # pointed 0.64 -> full(ish) bias
+                "left": (0.0, 5.0)}       # planted 0.23 -> none
+    for side, (lo, hi) in expected.items():
+        ai = I[f"{side}_ankle"]
+        d_pure = wdelta_from(L, ai, name_keyed=False)
+        d_state = wdelta_from(st["pose"], ai, name_keyed=True)
+        diff = QM.multiply(d_state, conj(d_pure))
+        if diff[0] < 0:
+            diff = -np.asarray(diff, float)
+        ang = float(np.degrees(2 * np.arctan2(np.linalg.norm(diff[1:]), diff[0])))
+        assert lo <= ang <= hi, (
+            f"{side}: state-vs-solve ankle differs by {ang:.1f} deg, expected "
+            f"[{lo}, {hi}] (pointedness-ramped +30 roll bias)")
+        if ang > 5:
+            hi_, bi, si = (I[f"{side}_{x}"] for x in ("heel", "big_toe", "small_toe"))
+            axis = unit(np.asarray(QM.rotate_vector(
+                d_pure, unit(0.5 * (RIG.rest_world_p[bi] + RIG.rest_world_p[si])
+                             - RIG.rest_world_p[hi_])), float))
+            adiff = unit(diff[1:])
+            assert abs(float(np.dot(adiff, axis))) > 0.99, (
+                f"{side}: bias axis is not the foot axis (dot={np.dot(adiff, axis):+.3f})")

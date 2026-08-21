@@ -131,6 +131,14 @@ _LIMB_CHAINS = (
 _MIN_BEND_SIN = 0.05     # < ~3 deg bend: no stable bend plane; generic solve
 _PLANE_TRUST_SIN = 0.26  # < ~15 deg bend: plane too noisy for LEG twist; foot decides
 _SPINE1_SHARE = 0.65     # lumbar share of the pelvis->chest rotation (Scott's captures)
+# Ankle roll bias: Scott's pick from the roll ladder on row c5cf2013
+# (2026-08-22) -- the detector's tiny foot labels carry a sole-roll bias
+# only an eye can calibrate. Applied about the solved foot axis, ramped by
+# pointedness so flat planted feet (long approved) stay untouched. Lives in
+# rig_state_from_mhr70, never in solve_rig_locals: the rest-roundtrip and
+# the machine gate stay pure. One-row calibration -- revisit per his eye.
+_ANKLE_ROLL_BIAS_DEG = 30.0
+_ANKLE_ROLL_RAMP = (0.25, 0.60)   # pointedness: 0 bias below, full above
 
 
 def _unit_or_none(v):
@@ -790,6 +798,41 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         pelvis_i = li["pelvis"]
         solved[pelvis_i] = QuaternionMath.multiply(yaw, solved[pelvis_i])
 
+    # Ankle roll bias (see _ANKLE_ROLL_BIAS_DEG above): applied here so the
+    # pure solve stays bias-free.
+    Wr_all = fk_world_orientations(rig, rig.rest_local_q)
+    Wq = fk_world_orientations(rig, {**rig.rest_local_q, **solved})
+    for side in ("left", "right"):
+        ai = li[f"{side}_ankle"]
+        ki, hi2 = rig.parent[ai], li[f"{side}_heel"]
+        bi2, si2 = li[f"{side}_big_toe"], li[f"{side}_small_toe"]
+        if not (ai in solved and ki in solved
+                and all(k in targets for k in (ki, ai, hi2, bi2, si2))):
+            continue
+        fa_t = np.asarray(targets[bi2], float) + np.asarray(targets[si2], float)
+        fa_t = fa_t * 0.5 - np.asarray(targets[hi2], float)
+        shin = np.asarray(targets[ai], float) - np.asarray(targets[ki], float)
+        nf, ns = np.linalg.norm(fa_t), np.linalg.norm(shin)
+        if nf < _FRAME_EPS or ns < _FRAME_EPS:
+            continue
+        pointed = abs(float(np.dot(fa_t / nf, shin / ns)))
+        lo, hi_r = _ANKLE_ROLL_RAMP
+        scale = min(1.0, max(0.0, (pointed - lo) / (hi_r - lo)))
+        if scale <= 0.0:
+            continue
+        d_a = QuaternionMath.multiply(Wq[ai], QuaternionMath.conjugate(Wr_all[ai]))
+        rest_axis = (0.5 * (rig.rest_world_p[bi2] + rig.rest_world_p[si2])
+                     - rig.rest_world_p[hi2])
+        na = np.linalg.norm(rest_axis)
+        if na < _FRAME_EPS:
+            continue
+        axis_now = QuaternionMath.rotate_vector(d_a, rest_axis / na)
+        bias = _axis_angle_q(np.asarray(axis_now, float) / np.linalg.norm(axis_now),
+                             np.radians(_ANKLE_ROLL_BIAS_DEG * scale))
+        w_new = QuaternionMath.multiply(bias, Wq[ai])
+        solved[ai] = QuaternionMath.multiply(QuaternionMath.conjugate(Wq[ki]), w_new)
+
+
     # ruling 7: solve_rig_locals deliberately covers only the solved bones --
     # padding its own output would claim to have solved bones it never
     # touched. Assembly owns the merge: every bone must land in the state, so
@@ -834,7 +877,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 11,
+        "retargetVersion": 12,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
