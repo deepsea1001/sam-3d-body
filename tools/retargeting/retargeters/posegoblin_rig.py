@@ -199,6 +199,81 @@ def _pair_delta(a1, a2, b1, b2):
     return QuaternionMath.from_matrix(out[1] @ out[0].T)
 
 
+_ANKLE_FOOT = {
+    "left_ankle": ("left_heel", "left_big_toe", "left_small_toe"),
+    "right_ankle": ("right_heel", "right_big_toe", "right_small_toe"),
+}
+
+
+def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
+    """World delta posing the ankle as Rz(theta)*Rx(psi) ONLY -- never Y.
+
+    Scott (2026-08-21): "ankle is incorrect - axis is +/-Z"; the rig's own
+    limits agree (ankle: z [-81, 106] plantar/dorsiflexion, x [-75, 75]
+    inversion/eversion, no y entry), and every posed capture ankle is a Z or
+    Z+X composition. The free-orientation Kabsch this replaces invented Y
+    twist from the heel/toe fit.
+
+    Aims the foot axis (heel -> toe midpoint): psi is solved so the axis's
+    local-Z height is reachable (Rz preserves z), theta closes the remaining
+    angle in the XY plane. Exact whenever the target pitch lies inside the
+    rig's reachable cone; clamped to the nearest pitch otherwise. Returns
+    None (caller falls back to the generic solve) if the foot targets are
+    absent or the geometry is degenerate."""
+    names = _ANKLE_FOOT.get(rig.name[n])
+    p = rig.parent[n]
+    if names is None or p is None or p not in D:
+        return None
+    li = rig.index_of_name
+    hi, bi, si = (li[x] for x in names)
+    if not all(k in targets for k in (hi, bi, si)):
+        return None
+    rest = rig.rest_world_p
+    v_w = _unit_or_none(0.5 * (rest[bi] + rest[si]) - rest[hi])
+    u_w = _unit_or_none(0.5 * (np.asarray(targets[bi], float) + np.asarray(targets[si], float))
+                        - np.asarray(targets[hi], float))
+    if v_w is None or u_w is None:
+        return None
+    pre = QuaternionMath.multiply(D[p], Wr[n])          # ankle frame before its own delta
+    v = QuaternionMath.rotate_vector(QuaternionMath.conjugate(Wr[n]), v_w)
+    u = QuaternionMath.rotate_vector(QuaternionMath.conjugate(pre), u_w)
+    R = float(np.hypot(v[1], v[2]))
+    if R < 1e-6:
+        return None
+    phi0 = float(np.arctan2(v[1], v[2]))
+    c = float(np.clip(u[2], -R, R))                     # unreachable pitch: clamp
+    d = float(np.arccos(np.clip(c / R, -1.0, 1.0)))
+    # Both psi branches aim the foot axis exactly; they differ only in the
+    # roll they leave the sole with. The heel ray is real data about that
+    # roll, so it picks the branch (not a "least motion" prior).
+    heel_rest = _unit_or_none(rest[hi] - rest[n])
+    heel_tgt = _unit_or_none(np.asarray(targets[hi], float)
+                             - np.asarray(targets[n], float))
+    best = None
+    for psi in (phi0 + d, phi0 - d):
+        psi = float(np.arctan2(np.sin(psi), np.cos(psi)))
+        w = np.array([v[0],
+                      v[1] * np.cos(psi) - v[2] * np.sin(psi),
+                      v[1] * np.sin(psi) + v[2] * np.cos(psi)])
+        if np.hypot(w[0], w[1]) < 1e-6 or np.hypot(u[0], u[1]) < 1e-6:
+            continue                                    # foot axis along the hinge
+        theta = float(np.arctan2(u[1], u[0]) - np.arctan2(w[1], w[0]))
+        delta = QuaternionMath.multiply(
+            _axis_angle_q(np.array([0.0, 0.0, 1.0]), theta),
+            _axis_angle_q(np.array([1.0, 0.0, 0.0]), psi))
+        d_world = QuaternionMath.multiply(
+            D[p], QuaternionMath.multiply(
+                Wr[n], QuaternionMath.multiply(delta, QuaternionMath.conjugate(Wr[n]))))
+        if heel_rest is None or heel_tgt is None:
+            score = -abs(psi)                           # no heel data: least roll
+        else:
+            score = float(np.dot(
+                QuaternionMath.rotate_vector(d_world, heel_rest), heel_tgt))
+        if best is None or score > best[0]:
+            best = (score, d_world)
+    return None if best is None else best[1]
+
+
 def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
                    Wr: dict) -> dict[int, np.ndarray]:
     """World deltas for the anchored bones: pelvis (hip frame), the four limb
@@ -315,6 +390,10 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     for n in solved:
         if n in anchors:
             D[n] = anchors[n]
+            continue
+        d_ankle = _try_ankle_delta(rig, targets, Wr, D, n)
+        if d_ankle is not None:
+            D[n] = d_ankle
             continue
         pairs = []
         if n in targets:
@@ -608,7 +687,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 4,
+        "retargetVersion": 5,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
