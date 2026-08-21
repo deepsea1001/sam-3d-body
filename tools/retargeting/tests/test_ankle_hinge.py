@@ -126,24 +126,33 @@ def test_ankle_roll_bias_applies_at_state_assembly():
             w = q if w is None else QM.multiply(w, q)
         return QM.multiply(w, conj(Wr[ai]))
 
-    expected = {"right": (26.0, 32.0),    # pointed 0.64 -> full(ish) bias
-                "left": (0.0, 5.0)}       # planted 0.23 -> none
-    for side, (lo, hi) in expected.items():
+    # Scott (2026-08-22): "the left foot needs the opposite sign" -- the
+    # bias mirrors anatomically: +30 right, -30 left, about each foot's own
+    # heel->toe axis. Signed checks per side; row 0 pins the right (+),
+    # row 1 (pointed LEFT foot, 0.92) pins the left (-).
+    def check(row_idx, side, lo, hi, sign):
+        kp2 = np.asarray(REG[row_idx]["kp70"], np.float32).reshape(70, 3)
+        L2 = solve_rig_locals(RIG, rig_targets_from_mhr70(kp2))
+        st2 = rig_state_from_mhr70(kp2)
         ai = I[f"{side}_ankle"]
-        d_pure = wdelta_from(L, ai, name_keyed=False)
-        d_state = wdelta_from(st["pose"], ai, name_keyed=True)
+        d_pure = wdelta_from(L2, ai, name_keyed=False)
+        d_state = wdelta_from(st2["pose"], ai, name_keyed=True)
         diff = QM.multiply(d_state, conj(d_pure))
         if diff[0] < 0:
             diff = -np.asarray(diff, float)
         ang = float(np.degrees(2 * np.arctan2(np.linalg.norm(diff[1:]), diff[0])))
         assert lo <= ang <= hi, (
-            f"{side}: state-vs-solve ankle differs by {ang:.1f} deg, expected "
-            f"[{lo}, {hi}] (pointedness-ramped +30 roll bias)")
+            f"row{row_idx}/{side}: state-vs-solve differs {ang:.1f} deg, "
+            f"expected [{lo}, {hi}]")
         if ang > 5:
             hi_, bi, si = (I[f"{side}_{x}"] for x in ("heel", "big_toe", "small_toe"))
             axis = unit(np.asarray(QM.rotate_vector(
                 d_pure, unit(0.5 * (RIG.rest_world_p[bi] + RIG.rest_world_p[si])
                              - RIG.rest_world_p[hi_])), float))
-            adiff = unit(diff[1:])
-            assert abs(float(np.dot(adiff, axis))) > 0.99, (
-                f"{side}: bias axis is not the foot axis (dot={np.dot(adiff, axis):+.3f})")
+            d = float(np.dot(unit(diff[1:]), axis))
+            assert d * sign > 0.99, (
+                f"row{row_idx}/{side}: bias sign wrong (dot={d:+.3f}, want "
+                f"sign {'+' if sign > 0 else '-'})")
+    check(0, "right", 26.0, 32.0, +1)   # Scott's ladder pick
+    check(0, "left", 0.0, 5.0, +1)      # planted: no bias
+    check(1, "left", 26.0, 32.0, -1)    # pointed left: mirrored sign

@@ -820,6 +820,11 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         scale = min(1.0, max(0.0, (pointed - lo) / (hi_r - lo)))
         if scale <= 0.0:
             continue
+        # Anatomically mirrored (Scott: "the left foot needs the opposite
+        # sign"): a consistent inversion/eversion bias flips sign across the
+        # midline. +30 right, -30 left, about each foot's own heel->toe axis.
+        if side == "left":
+            scale = -scale
         d_a = QuaternionMath.multiply(Wq[ai], QuaternionMath.conjugate(Wr_all[ai]))
         rest_axis = (0.5 * (rig.rest_world_p[bi2] + rig.rest_world_p[si2])
                      - rig.rest_world_p[hi2])
@@ -877,7 +882,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 12,
+        "retargetVersion": 13,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
