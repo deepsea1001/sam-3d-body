@@ -162,7 +162,7 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     assert q["_x"] == pytest.approx(float(expected_pelvis_q[1]), abs=1e-9)
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
-    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 5
+    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 6
     # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
     # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
     # rejects it), so round-trip through parse_constant and make IT raise.
@@ -348,7 +348,10 @@ def test_solved_directions_land_on_targets_for_a_real_row():
             # whatever the forbidden Y rotation would have taken. Measured on
             # this fixture row: left 0.8819 / right 0.9227; the floor is a
             # regression bound on that anatomy trade, not an aspiration.
-            if rig.name[n] in ("left_ankle", "right_ankle"):
+            # Same rationale for the Y-constrained neck (Scott: neck nods
+            # about Y only, sharing the nod with the head): neck->head is
+            # derived, measured 0.9101 on this fixture row.
+            if rig.name[n] in ("left_ankle", "right_ankle", "neck"):
                 kind, floor = "ANCHORED", 0.85
             else:
                 kind = "EXACT" if len(siblings) == 1 else "FITTED"

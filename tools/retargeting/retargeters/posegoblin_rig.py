@@ -128,7 +128,8 @@ _LIMB_CHAINS = (
     ("left_hip", "left_knee", "left_ankle", +1.0),
     ("right_hip", "right_knee", "right_ankle", +1.0),
 )
-_MIN_BEND_SIN = 0.05   # < ~3 deg bend: no stable bend plane; generic solve
+_MIN_BEND_SIN = 0.05     # < ~3 deg bend: no stable bend plane; generic solve
+_PLANE_TRUST_SIN = 0.26  # < ~15 deg bend: plane too noisy for LEG twist; foot decides
 
 
 def _unit_or_none(v):
@@ -300,15 +301,52 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
         f_t = _unit_or_none(np.asarray(targets[ei], float) - np.asarray(targets[mi], float))
         if u_t is None or f_t is None:
             continue
-        n_raw = np.cross(u_t, f_t)
-        if np.linalg.norm(n_raw) < _MIN_BEND_SIN:
-            continue                      # near-straight limb: hinge undefined
-        prefer = sgn * n_raw / np.linalg.norm(n_raw)
         u_r = _unit_or_none(rest[mi] - rest[ri])
         f_r = _unit_or_none(rest[ei] - rest[mi])
         z_r = QuaternionMath.rotate_vector(Wr[mi], np.array([0.0, 0.0, 1.0]))
         if u_r is None or f_r is None:
             continue
+        n_raw = np.cross(u_t, f_t)
+        bend_sin = float(np.linalg.norm(n_raw))
+        foot = _ANKLE_FOOT.get(rig.name[ei])
+        if bend_sin < _PLANE_TRUST_SIN and foot is not None:
+            # Near-straight LEG: the bend plane is noise (measured: knee bends
+            # under 5 deg put 24/29 corpus heels below the floor, q10 cosine
+            # 0.31), but a straight leg's twist is exactly what orients the
+            # foot -- so the foot axis chooses it instead of the plane.
+            hi2, bi2, si2 = (li[x] for x in foot)
+            if all(k in targets for k in (hi2, bi2, si2)):
+                fa_r = _unit_or_none(0.5 * (rest[bi2] + rest[si2]) - rest[hi2])
+                fa_t = _unit_or_none(
+                    0.5 * (np.asarray(targets[bi2], float) + np.asarray(targets[si2], float))
+                    - np.asarray(targets[hi2], float))
+                if fa_r is not None and fa_t is not None:
+                    swing = QuaternionMath.from_two_vectors(u_r, u_t)
+                    a0 = QuaternionMath.rotate_vector(swing, fa_r)
+                    pa = a0 - np.dot(a0, u_t) * u_t
+                    pb = fa_t - np.dot(fa_t, u_t) * u_t
+                    if np.linalg.norm(pa) > 1e-3 and np.linalg.norm(pb) > 1e-3:
+                        pa, pb = pa / np.linalg.norm(pa), pb / np.linalg.norm(pb)
+                        psi = float(np.arctan2(np.dot(u_t, np.cross(pa, pb)),
+                                               np.dot(pa, pb)))
+                        d_root = QuaternionMath.multiply(_axis_angle_q(u_t, psi), swing)
+                        h = _unit_or_none(QuaternionMath.rotate_vector(d_root, z_r))
+                        a = QuaternionMath.rotate_vector(d_root, f_r)
+                        if h is not None:
+                            a_p = a - np.dot(a, h) * h
+                            b_p = f_t - np.dot(f_t, h) * h
+                            if np.linalg.norm(a_p) > 1e-6 and np.linalg.norm(b_p) > 1e-6:
+                                a_p, b_p = (a_p / np.linalg.norm(a_p),
+                                            b_p / np.linalg.norm(b_p))
+                                phi = float(np.arctan2(
+                                    np.dot(h, np.cross(a_p, b_p)), np.dot(a_p, b_p)))
+                                A[ri] = d_root
+                                A[mi] = QuaternionMath.multiply(
+                                    _axis_angle_q(h, phi), d_root)
+            continue
+        if bend_sin < _MIN_BEND_SIN:
+            continue                      # near-straight arm: hinge undefined
+        prefer = sgn * n_raw / bend_sin
         # The rig's own rest cone: the angle between the hinge and the lower
         # segment is preserved by any pure-Z bend, so the shoulder/hip twist
         # must place the hinge where the cone passes through the target.
@@ -355,6 +393,26 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
                         np.asarray(targets[lc], float) - np.asarray(targets[rc], float))
         if d is not None:
             A[s2] = d
+
+    # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
+    # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
+    # captures split a look-down ~half/half -- crouch neck +38 / head +36 --
+    # and every posed neck is pure Y to two decimals). The head anchor above
+    # is world-exact, so its local absorbs the remainder exactly.
+    hi = li["head"]
+    if s2 in A and hi in A and rig.name[nk] == "neck":
+        r_ln = QuaternionMath.multiply(
+            QuaternionMath.conjugate(Wr[nk]),
+            QuaternionMath.multiply(
+                QuaternionMath.conjugate(A[s2]),
+                QuaternionMath.multiply(A[hi], Wr[nk])))
+        if r_ln[0] < 0:
+            r_ln = -np.asarray(r_ln, float)
+        kappa = 2.0 * float(np.arctan2(r_ln[2], r_ln[0]))   # Y twist of the total
+        dy = _axis_angle_q(np.array([0.0, 1.0, 0.0]), kappa / 2.0)
+        A[nk] = QuaternionMath.multiply(
+            A[s2], QuaternionMath.multiply(
+                Wr[nk], QuaternionMath.multiply(dy, QuaternionMath.conjugate(Wr[nk]))))
 
     return A
 
@@ -687,7 +745,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 5,
+        "retargetVersion": 6,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
