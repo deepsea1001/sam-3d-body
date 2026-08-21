@@ -38,6 +38,7 @@ from .bind_poses.loader import BindPoseLoader
 from .bind_poses.validator import BindPoseValidator
 from .retargeters.base import BaseRetargeter
 from .retargeters.mhr70_retargeter import MHR70Retargeter
+from .retargeters.posegoblin_rig import rig_state_from_mhr70
 from .exporters.base import BaseExporter
 from .exporters.threejs_exporter import ThreeJSExporter
 from .exporters.mannequin_exporter import MannequinExporter, MHR70_TO_MANNEQUIN
@@ -47,6 +48,7 @@ __all__ = [
     "retarget_to_mannequin",
     "retarget_to_mannequin_format",
     "retarget_from_pipeline",
+    "rig_state_from_mhr70",
     # Core classes
     "QuaternionMath",
     "VectorMath",

@@ -166,3 +166,103 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
             wp = QuaternionMath.multiply(D[p], Wr[p])
             L[n] = QuaternionMath.multiply(QuaternionMath.conjugate(wp), wb)
     return L
+
+
+ROOT_DISPLAY_YAW_DEG: float = 0.0   # fitted against ground-truth captures (Task 5); inert until then
+
+
+def rig_targets_from_mhr70(kp_cam: np.ndarray) -> dict[int, np.ndarray]:
+    """(70,3) CV camera keypoints -> rig-bone-INDEX-keyed world targets, Y-up.
+
+    Reuses MHR70Retargeter.compute_joint_positions for cv_to_yup, the
+    keypoint mapping, and the synthesised joints (root = hip midpoint, head =
+    ear midpoint, interpolated spine). This loads default_human.json only to
+    construct a valid MHR70Retargeter instance -- compute_joint_positions
+    never reads self.bind_pose, so nothing here is SOLVED against that
+    asset; the solve itself (solve_rig_locals) never touches it either.
+
+    Index-keyed, not name-keyed (ruling 6): solve_rig_locals and
+    fk_world_positions are index-keyed throughout because the rig has two
+    bones sharing the name "joint7", so rig.index_of_name resolves the 72
+    genuinely unique names and deliberately raises KeyError for "joint7".
+    MHR-70 names are unique and none of them maps to a mannequin bone named
+    "joint7", so this lookup is safe here -- but if it ever DID raise, it
+    must raise, not silently drop the joint.
+    """
+    from .mhr70_retargeter import MHR70Retargeter
+    from ..bind_poses.loader import BindPoseLoader
+    from ..exporters.mannequin_exporter import MHR70_TO_MANNEQUIN
+
+    rig = load_rig()
+    pos = MHR70Retargeter(BindPoseLoader.get_default_bind_pose()) \
+        .compute_joint_positions(np.asarray(kp_cam, np.float32))
+    targets: dict[int, np.ndarray] = {}
+    for j, p in pos.items():
+        bone_name = MHR70_TO_MANNEQUIN.get(j)
+        if bone_name is None:
+            continue                                  # no mannequin equivalent: deliberate skip
+        targets[rig.index_of_name[bone_name]] = np.asarray(p, float)   # KeyError propagates, never caught
+    return targets
+
+
+def _leg_len(points: dict, hip: int, knee: int, ankle: int) -> float:
+    """hip->knee->ankle chain length. *points* and the three args share one
+    index space (rig bone index): both rig.rest_world_p and the targets from
+    rig_targets_from_mhr70 are index-keyed (ruling 6)."""
+    return (float(np.linalg.norm(points[knee] - points[hip]))
+            + float(np.linalg.norm(points[ankle] - points[knee])))
+
+
+def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
+    """(70,3) CV camera keypoints -> full mannequinState for the PoseGoblin
+    viewer: every rig bone posed (rig units), ready to serialize."""
+    rig = load_rig()
+    li = rig.index_of_name
+    targets = rig_targets_from_mhr70(kp_cam)
+    solved = solve_rig_locals(rig, targets)   # index-keyed, the 34 SOLVED bones ONLY (ruling 7)
+
+    if ROOT_DISPLAY_YAW_DEG:
+        t = np.radians(ROOT_DISPLAY_YAW_DEG)
+        yaw = np.array([np.cos(t / 2), 0.0, np.sin(t / 2), 0.0])
+        pelvis_i = li["pelvis"]
+        solved[pelvis_i] = QuaternionMath.multiply(yaw, solved[pelvis_i])
+
+    # ruling 7: solve_rig_locals deliberately covers only the solved bones --
+    # padding its own output would claim to have solved bones it never
+    # touched. Assembly owns the merge: every bone must land in the state, so
+    # the 40 unsolved finger/thumb bones fall back to their REST locals.
+    full_by_index = {**rig.rest_local_q, **solved}
+
+    # ruling 5: PoseGoblin reads state.pose[child.name], so the emitted pose
+    # is NAME-keyed, not index-keyed. The two "joint7" bones collapse to a
+    # single entry -- last-one-wins by iterating rig.order in parent-first
+    # order, matching PoseGoblin's own captureCurrentState/RecallPoseCommand
+    # contract instead of diverging from it.
+    pose = {rig.name[i]: QuaternionMath.to_threejs_dict(full_by_index[i]) for i in rig.order}
+
+    # scale: subject leg length (meters, pose-invariant) -> rig units
+    rig_leg = np.mean([
+        _leg_len(rig.rest_world_p, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _leg_len(rig.rest_world_p, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    tgt_leg = np.mean([
+        _leg_len(targets, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _leg_len(targets, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    s = rig_leg / max(tgt_leg, 1e-6)
+
+    # Feet mannequin bone names verified against MHR70_TO_MANNEQUIN's VALUES
+    # (not guessed): left_heel/right_heel/left_big_toe/right_big_toe.
+    feet_idx = [li[n] for n in ("left_heel", "right_heel", "left_big_toe", "right_big_toe")]
+    feet = [targets[i][1] for i in feet_idx if i in targets]
+    pelvis = targets[li["pelvis"]] * s
+
+    from ..exporters.mannequin_exporter import MannequinExporter
+    return {
+        "pose": pose,
+        "pelvisPosition": {"x": float(pelvis[0]), "y": float(pelvis[1]), "z": float(pelvis[2])},
+        "groundY": float(min(feet) * s) if feet else 0.0,
+        "cameraState": MannequinExporter.get_default_camera_state(),
+        "rigVersion": rig.version,
+        "retargetVersion": 2,
+    }
