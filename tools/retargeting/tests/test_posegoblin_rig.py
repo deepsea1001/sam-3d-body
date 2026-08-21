@@ -163,7 +163,15 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
     assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 2
-    json.dumps(st)                                   # wire-safe, no numpy leaks
+    # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
+    # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
+    # rejects it), so round-trip through parse_constant and make IT raise.
+    # (rig_state_from_mhr70 also guards this internally via
+    # _assert_all_finite, but the test independently verifies wire-safety
+    # rather than trusting that guard was actually exercised.)
+    def _reject_non_finite_token(token):
+        raise ValueError(f"non-finite value would reach the wire: {token}")
+    json.loads(json.dumps(st), parse_constant=_reject_non_finite_token)
 
     # ruling 10: pelvisPosition is the rig's REST pelvis position -- a pose
     # viewer shows the POSE, not the subject's translation through camera
@@ -405,3 +413,69 @@ def test_synthesized_pelvis_target_reproduces_rig_rest_topology():
         f"-- error {err:.4f} rig units ({err / rig_leg_len:.2%} of leg length), "
         "expected near-zero at self-consistency (targets == rig's own rest)"
     )
+
+
+def test_synthesize_pelvis_target_raises_on_coincident_hips():
+    """Review finding: no silent NaN. Coincident hip targets make the hip
+    separation vector's norm zero; a naive normalize divides by that zero
+    (only a numpy RuntimeWarning, no exception) and produces NaN, which
+    would then flow into pelvisPosition/pose and reach json.dumps as a
+    literal (invalid) `NaN`. The frame construction must raise instead --
+    and never silently fall back to world axes, which would produce a
+    plausible-looking but wrong pose for an inverted or supine subject."""
+    from retargeting.retargeters.posegoblin_rig import load_rig, synthesize_pelvis_target
+    rig = load_rig()
+    li = rig.index_of_name
+    targets = dict(rig.rest_world_p)          # a full, otherwise-valid target set
+    targets[li["right_hip"]] = targets[li["left_hip"]].copy()   # coincident hips
+    with pytest.raises(ValueError, match="coincident"):
+        synthesize_pelvis_target(rig, targets)
+
+
+def test_synthesize_pelvis_target_raises_on_collinear_hip_and_up():
+    """The other degenerate scenario the review named: hip line and up
+    direction collinear (spine_1 lying on the same line as the hip
+    separation, through the hip midpoint) -- the cross product defining
+    `fwd` is then near-zero. Must raise, not silently produce NaN."""
+    from retargeting.retargeters.posegoblin_rig import load_rig, synthesize_pelvis_target
+    rig = load_rig()
+    li = rig.index_of_name
+    targets = dict(rig.rest_world_p)
+    lhip, rhip = li["left_hip"], li["right_hip"]
+    hip_mid = (targets[lhip] + targets[rhip]) / 2
+    right_dir = targets[lhip] - targets[rhip]
+    targets[li["spine_1"]] = hip_mid + right_dir   # spine_1 forced onto the hip line
+    with pytest.raises(ValueError, match="collinear"):
+        synthesize_pelvis_target(rig, targets)
+
+
+def test_synthesize_pelvis_target_raises_when_up_reference_coincides_with_hip_midpoint():
+    """Third guarded degeneracy (not explicitly named by the review, but
+    the same underlying divide-by-zero-norm risk): the up reference
+    (spine_1) landing exactly on the hip midpoint, so there is no direction
+    to build `up` from at all."""
+    from retargeting.retargeters.posegoblin_rig import load_rig, synthesize_pelvis_target
+    rig = load_rig()
+    li = rig.index_of_name
+    targets = dict(rig.rest_world_p)
+    lhip, rhip = li["left_hip"], li["right_hip"]
+    targets[li["spine_1"]] = (targets[lhip] + targets[rhip]) / 2   # spine_1 AT the hip midpoint
+    with pytest.raises(ValueError, match="hip midpoint"):
+        synthesize_pelvis_target(rig, targets)
+
+
+def test_assert_all_finite_catches_an_injected_nan():
+    """Evidence for the belt-and-braces finiteness guard (item 2 of the
+    review fix): construct an otherwise-valid state with a NaN hand-injected
+    into one bone's quaternion and confirm _assert_all_finite raises, naming
+    that bone -- so a future edit that introduces a non-finite value by some
+    OTHER route than the frame-degeneracy guard still fails loudly here,
+    before json.dumps ever gets a chance to emit invalid JSON."""
+    import json
+    from retargeting.retargeters.posegoblin_rig import rig_state_from_mhr70, _assert_all_finite
+    row = json.load(open(_FIXTURE))
+    kp = np.asarray(row["mhr70_xyz"], np.float32).reshape(70, 3)
+    st = rig_state_from_mhr70(kp)          # a real, valid state
+    st["pose"]["left_elbow"]["_y"] = float("nan")   # inject
+    with pytest.raises(ValueError, match="left_elbow"):
+        _assert_all_finite(st)

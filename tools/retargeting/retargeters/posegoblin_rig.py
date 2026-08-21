@@ -223,21 +223,71 @@ def _leg_len(points: dict, hip: int, knee: int, ankle: int) -> float:
             + float(np.linalg.norm(points[ankle] - points[knee])))
 
 
+_FRAME_EPS = 1e-6  # matches solve_rig_locals's own "vector is degenerate" tolerance
+                    # elsewhere in this module; far below any real bone length in
+                    # metres (MHR-70 targets) or rig units (rest positions), but large
+                    # enough to catch genuine coincidence/collinearity rather than noise.
+
+
 def _orthonormal_frame_from_hips_and_up(points: dict, left_hip: int, right_hip: int,
                                          up_ref: int) -> tuple:
     """right = direction from right_hip to left_hip; up = direction from the
     hip midpoint to *up_ref*, re-orthonormalised against right (Gram-Schmidt
     via cross products, so it's exact even when the raw up reference isn't
     perfectly perpendicular to the hip line); fwd completes a right-handed
-    orthonormal basis. Returns (right, up, fwd, hip_mid)."""
+    orthonormal basis. Returns (right, up, fwd, hip_mid).
+
+    Raises ValueError naming the degenerate condition and the offending
+    joint positions if any basis vector's norm is below _FRAME_EPS before
+    normalising -- never silently falls back to world axes, which would
+    produce a plausible-looking but wrong pose for an inverted or supine
+    subject. SAM-3D output is noisy and this runs over thousands of real
+    detections; a bad one must fail loudly, not emit a NaN that only a
+    numpy RuntimeWarning would hint at.
+    """
     hip_mid = (points[left_hip] + points[right_hip]) / 2
-    right = points[left_hip] - points[right_hip]
-    right = right / np.linalg.norm(right)
+
+    right_raw = points[left_hip] - points[right_hip]
+    right_norm = np.linalg.norm(right_raw)
+    if right_norm < _FRAME_EPS:
+        raise ValueError(
+            f"degenerate pelvis frame: left_hip and right_hip are coincident "
+            f"(separation {right_norm:.3e} < {_FRAME_EPS:.0e}) -- "
+            f"left_hip={points[left_hip]!r}, right_hip={points[right_hip]!r}")
+    right = right_raw / right_norm
+
     up_raw = points[up_ref] - hip_mid
-    fwd = np.cross(right, up_raw)
-    fwd = fwd / np.linalg.norm(fwd)
-    up = np.cross(fwd, right)
-    up = up / np.linalg.norm(up)
+    up_raw_norm = np.linalg.norm(up_raw)
+    if up_raw_norm < _FRAME_EPS:
+        raise ValueError(
+            f"degenerate pelvis frame: the up reference coincides with the hip "
+            f"midpoint (separation {up_raw_norm:.3e} < {_FRAME_EPS:.0e}) -- "
+            f"up_ref={points[up_ref]!r}, hip_mid={hip_mid!r}")
+
+    fwd_raw = np.cross(right, up_raw)
+    fwd_norm = np.linalg.norm(fwd_raw)
+    if fwd_norm < _FRAME_EPS:
+        raise ValueError(
+            f"degenerate pelvis frame: the hip line and the up direction are "
+            f"collinear (cross-product norm {fwd_norm:.3e} < {_FRAME_EPS:.0e}) -- "
+            f"left_hip={points[left_hip]!r}, right_hip={points[right_hip]!r}, "
+            f"up_ref={points[up_ref]!r}")
+    fwd = fwd_raw / fwd_norm
+
+    up_result_raw = np.cross(fwd, right)
+    up_result_norm = np.linalg.norm(up_result_raw)
+    if up_result_norm < _FRAME_EPS:
+        # Unreachable if the two guards above hold: fwd and right are then
+        # unit vectors that are exactly orthogonal by construction (fwd was
+        # built as a cross product involving right), so this cross
+        # product's norm is exactly 1. Kept as defense in depth, per
+        # "check each basis vector's norm before normalising."
+        raise ValueError(
+            f"degenerate pelvis frame: fwd x right had near-zero norm "
+            f"({up_result_norm:.3e} < {_FRAME_EPS:.0e}), which should be "
+            f"unreachable -- fwd={fwd!r}, right={right!r}")
+    up = up_result_raw / up_result_norm
+
     return right, up, fwd, hip_mid
 
 
@@ -257,8 +307,13 @@ def synthesize_pelvis_target(rig: Rig, targets: dict[int, np.ndarray]) -> np.nda
        own leg length.
 
     `targets` must already contain left_hip, right_hip, left/right knee and
-    ankle, and (spine_1 or neck); everything but the pelvis entry is read,
-    not written.
+    ankle, and spine_1; everything but the pelvis entry is read, not
+    written. (No neck fallback: MHR70Retargeter.compute_joint_positions_static
+    unconditionally computes spine1, so rig_targets_from_mhr70's output
+    always has it -- a fallback for "spine_1 missing" would be a branch
+    with no reachable input, not a guard against the degenerate cases
+    above, which are handled explicitly in
+    _orthonormal_frame_from_hips_and_up instead.)
     """
     li = rig.index_of_name
     lhip, rhip = li["left_hip"], li["right_hip"]
@@ -273,15 +328,32 @@ def synthesize_pelvis_target(rig: Rig, targets: dict[int, np.ndarray]) -> np.nda
                             _leg_len(rest, rhip, rknee, rankle)])
     offset_frac = offset_rest / rig_leg_len
 
-    up_ref = li["spine_1"] if li["spine_1"] in targets else li["neck"]
     right_t, up_t, fwd_t, hip_mid_t = _orthonormal_frame_from_hips_and_up(
-        targets, lhip, rhip, up_ref)
+        targets, lhip, rhip, li["spine_1"])
     tgt_leg_len = np.mean([_leg_len(targets, lhip, lknee, lankle),
                             _leg_len(targets, rhip, rknee, rankle)])
 
     offset_target = (offset_frac[0] * right_t + offset_frac[1] * up_t
                       + offset_frac[2] * fwd_t) * tgt_leg_len
     return hip_mid_t + offset_target
+
+
+def _assert_all_finite(state: dict) -> None:
+    """Belt to _orthonormal_frame_from_hips_and_up's guard-clause braces: a
+    future edit that introduces a non-finite value by some OTHER route must
+    still fail loudly here, before json.dumps ever gets a chance to emit a
+    bare `NaN`/`Infinity` -- invalid JSON, and something JavaScript's
+    JSON.parse rejects on the consuming end. Raises ValueError naming the
+    first offending bone/field, not a summary of all of them."""
+    for bone, q in state["pose"].items():
+        for k in ("_x", "_y", "_z", "_w"):
+            if not np.isfinite(q[k]):
+                raise ValueError(f"non-finite value in pose[{bone!r}][{k!r}]: {q[k]}")
+    for k, v in state["pelvisPosition"].items():
+        if not np.isfinite(v):
+            raise ValueError(f"non-finite value in pelvisPosition[{k!r}]: {v}")
+    if not np.isfinite(state["groundY"]):
+        raise ValueError(f"non-finite value in groundY: {state['groundY']}")
 
 
 def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
@@ -336,7 +408,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
     pelvis = rig.rest_world_p[li["pelvis"]]
 
     from ..exporters.mannequin_exporter import MannequinExporter
-    return {
+    state = {
         "pose": pose,
         "pelvisPosition": {"x": float(pelvis[0]), "y": float(pelvis[1]), "z": float(pelvis[2])},
         "groundY": float(min(feet) * s) if feet else 0.0,
@@ -344,3 +416,5 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "rigVersion": rig.version,
         "retargetVersion": 2,
     }
+    _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
+    return state
