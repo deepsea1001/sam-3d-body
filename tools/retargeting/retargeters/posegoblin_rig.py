@@ -137,7 +137,7 @@ _SPINE1_SHARE = 0.65     # lumbar share of the pelvis->chest rotation (Scott's c
 # pointedness so flat planted feet (long approved) stay untouched. Lives in
 # rig_state_from_mhr70, never in solve_rig_locals: the rest-roundtrip and
 # the machine gate stay pure. One-row calibration -- revisit per his eye.
-_ANKLE_ROLL_BIAS_DEG = 30.0
+_ANKLE_ROLL_BIAS_DEG = 20.0   # Scott dialed down from his initial +30 ladder pick
 _ANKLE_ROLL_RAMP = (0.25, 0.60)   # pointedness: 0 bias below, full above
 
 
@@ -882,7 +882,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 13,
+        "retargetVersion": 14,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
