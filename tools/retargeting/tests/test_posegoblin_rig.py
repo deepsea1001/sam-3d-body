@@ -162,7 +162,7 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     assert q["_x"] == pytest.approx(float(expected_pelvis_q[1]), abs=1e-9)
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
-    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 7
+    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 8
     # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
     # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
     # rejects it), so round-trip through parse_constant and make IT raise.
@@ -351,7 +351,14 @@ def test_solved_directions_land_on_targets_for_a_real_row():
             # Same rationale for the Y-constrained neck (Scott: neck nods
             # about Y only, sharing the nod with the head): neck->head is
             # derived, measured 0.9101 on this fixture row.
-            if rig.name[n] in ("left_ankle", "right_ankle", "neck"):
+            # Spine targets are SYNTHETIC (linear interpolation root->neck,
+            # mhr70_retargeter.py) -- there is no real keypoint to gate
+            # against, so these edges are printed but never scored. Absence
+            # must never be silent; a synthetic pass must never count either.
+            if (rig.name[n], rig.name[c]) in (("pelvis", "spine_1"),
+                                              ("spine_1", "spine_2")):
+                kind, floor = "SYNTH", None
+            elif rig.name[n] in ("left_ankle", "right_ankle", "neck"):
                 kind, floor = "ANCHORED", 0.85
             else:
                 kind = "EXACT" if len(siblings) == 1 else "FITTED"
@@ -363,12 +370,12 @@ def test_solved_directions_land_on_targets_for_a_real_row():
                     structurally_flagged.append((label, round(cos, 4), round(mismatch, 1)))
 
             rows.append((label, kind, round(cos, 4), floor))
-            if cos < floor:
+            if floor is not None and cos < floor:
                 bad[f"{label} ({kind})"] = round(cos, 4)
 
     print(f"\n{'bone':<28}{'kind':<8}{'cosine':>8}{'floor':>8}")
     for label, kind, cos, floor in rows:
-        print(f"{label:<28}{kind:<8}{cos:>8}{floor:>8}")
+        print(f"{label:<28}{kind:<8}{cos:>8}{'-' if floor is None else floor:>8}")
 
     print("\nUNGATED (structurally unsatisfiable) -- expected EMPTY, ruling 9 amended:")
     for label, cos, mismatch in structurally_flagged:

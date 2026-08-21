@@ -130,11 +130,25 @@ _LIMB_CHAINS = (
 )
 _MIN_BEND_SIN = 0.05     # < ~3 deg bend: no stable bend plane; generic solve
 _PLANE_TRUST_SIN = 0.26  # < ~15 deg bend: plane too noisy for LEG twist; foot decides
+_SPINE1_SHARE = 0.65     # lumbar share of the pelvis->chest rotation (Scott's captures)
 
 
 def _unit_or_none(v):
     n = np.linalg.norm(v)
     return None if n < _FRAME_EPS else np.asarray(v, float) / n
+
+
+def _slerp(q0, q1, t):
+    """Geodesic interpolation between [w,x,y,z] quaternions."""
+    q0 = np.asarray(q0, float); q1 = np.asarray(q1, float)
+    d = float(np.dot(q0, q1))
+    if d < 0.0:
+        q1, d = -q1, -d
+    if d > 0.9995:                      # nearly parallel: lerp + normalise
+        out = q0 + t * (q1 - q0)
+        return out / np.linalg.norm(out)
+    th = np.arccos(np.clip(d, -1.0, 1.0))
+    return (np.sin((1 - t) * th) * q0 + np.sin(t * th) * q1) / np.sin(th)
 
 
 def _axis_angle_q(axis, angle):
@@ -393,6 +407,20 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
                         np.asarray(targets[lc], float) - np.asarray(targets[rc], float))
         if d is not None:
             A[s2] = d
+
+    # Spine flexion (Scott 2026-08-21: "stiff as a board"). MHR-70 has no
+    # mid-spine keypoints -- spine1/spine2 targets are LINEAR INTERPOLATION
+    # root->neck (mhr70_retargeter.py JOINT_HIERARCHY), collinear by
+    # construction, so aiming them produced a straight rod with all torso
+    # pitch at the two end anchors (worse: the rod-aim over-rotated spine_1
+    # toward the chord, measured 84 deg of a 29 deg total). Instead spine_1
+    # takes exactly 65% of the pelvis->chest rotation along its geodesic --
+    # the lumbar share measured from Scott's own captures (crouch 60.7/32.8,
+    # hoop 37.0/19.9, both ~0.65) -- and spine_2's local absorbs the rest
+    # (its world anchor above is untouched).
+    pv = li["pelvis"]
+    if pv in A and s2 in A:
+        A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
@@ -768,7 +796,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 7,
+        "retargetVersion": 8,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
