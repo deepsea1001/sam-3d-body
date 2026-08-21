@@ -135,8 +135,25 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
     solved = [i for i in rig.order if rig.solve[i]]
+    li = rig.index_of_name
+    # Pelvis facing is the nullspace of child-direction fitting: its three
+    # children (spine_1, hips) have |triple product| 0.165 -- nearly
+    # coplanar -- so Kabsch leaves facing to numerical accident. Anchor the
+    # pelvis to the hip frame instead: exact, and facing becomes a
+    # constraint. Same construction on both sides, so rest and target
+    # frames correspond structurally.
+    anchor_pelvis = all(k in targets
+                        for k in (li["left_hip"], li["right_hip"], li["spine_1"]))
     D: dict = {}
     for n in solved:
+        if anchor_pelvis and n == li["pelvis"]:
+            fr = _orthonormal_frame_from_hips_and_up(
+                rig.rest_world_p, li["left_hip"], li["right_hip"], li["spine_1"])
+            ft = _orthonormal_frame_from_hips_and_up(
+                targets, li["left_hip"], li["right_hip"], li["spine_1"])
+            D[n] = QuaternionMath.from_matrix(
+                np.column_stack(ft[:3]) @ np.column_stack(fr[:3]).T)
+            continue
         pairs = []
         if n in targets:
             for c in rig.children[n]:
@@ -168,7 +185,21 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     return L
 
 
-ROOT_DISPLAY_YAW_DEG: float = 0.0   # fitted against ground-truth captures (Task 5); inert until then
+ROOT_DISPLAY_YAW_DEG: float = 0.0   # obsolete under the chirality fix below; kept inert at 0
+
+# cv_to_yup negates only Y -- a det(-1) REFLECTION of camera space. The
+# labeled anatomy of its output is chirally mirrored: over 118 corpus rows,
+# dot(cross(up, right_hip - left_hip), nose - head) came out negative on 117
+# (median -0.883) -- labeled left/right disagree with face-and-up on
+# essentially every real detection. A proper rotation can never fit a mirror
+# (_kabsch_q forces det +1), so the near-coplanar pelvis fit paid the
+# reflection off in the one axis it barely constrains: facing. Measured
+# before this fix: solved pelvis 174.8 deg from person-forward, IQR 0.2 deg,
+# deterministic and corpus-wide. Negating Z as well restores det(+1) -- the
+# composite cv->rig map is then a 180-deg rotation of camera space about X --
+# and lands camera-facing subjects facing +Z, the viewer: the convention
+# every hand-posed ground-truth capture was made in.
+_CV_YUP_TO_RIG = np.array([1.0, 1.0, -1.0])
 
 
 def rig_targets_from_mhr70(kp_cam: np.ndarray) -> dict[int, np.ndarray]:
@@ -201,7 +232,8 @@ def rig_targets_from_mhr70(kp_cam: np.ndarray) -> dict[int, np.ndarray]:
         bone_name = MHR70_TO_MANNEQUIN.get(j)
         if bone_name is None:
             continue                                  # no mannequin equivalent: deliberate skip
-        targets[rig.index_of_name[bone_name]] = np.asarray(p, float)   # KeyError propagates, never caught
+        targets[rig.index_of_name[bone_name]] = (
+            np.asarray(p, float) * _CV_YUP_TO_RIG)    # KeyError propagates, never caught
 
     # ruling 9 (amended): MHR-70's `root` is the exact hip MIDPOINT -- level
     # with the hips, so pelvis->left_hip and pelvis->right_hip are always
@@ -414,7 +446,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 2,
+        "retargetVersion": 3,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
