@@ -399,6 +399,29 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
     # captures split a look-down ~half/half -- crouch neck +38 / head +36 --
     # and every posed neck is pure Y to two decimals). The head anchor above
     # is world-exact, so its local absorbs the remainder exactly.
+    # Wrists: palm orientation from the hand keypoints (Scott 2026-08-21:
+    # "do we do anything with the wrists? ... or pronation supination?" --
+    # before this, the wrist inherited the elbow rigidly and pro/sup was
+    # lost). Hand axis (wrist -> middle knuckle) + knuckle line (index_1 <->
+    # pinky_1) encode pronation/supination, flexion and deviation together.
+    # Rest directions come straight from rest_world_p, which was captured
+    # from the live scene and therefore already includes the finger groups'
+    # 0.1 scale (FK cannot reproduce those positions; directions are fine).
+    # Degenerate/missing knuckles: _pair_delta returns None and the wrist
+    # keeps the inherit-elbow fallback.
+    for side in ("left", "right"):
+        wi = li[f"{side}_wrist"]
+        mi2 = li[f"{side}_middle_finger_1"]
+        ii2 = li[f"{side}_index_finger_1"]
+        pi2 = li[f"{side}_pinky_finger_1"]
+        if not all(k in targets for k in (wi, mi2, ii2, pi2)):
+            continue
+        d = _pair_delta(rest[mi2] - rest[wi], rest[ii2] - rest[pi2],
+                        np.asarray(targets[mi2], float) - np.asarray(targets[wi], float),
+                        np.asarray(targets[ii2], float) - np.asarray(targets[pi2], float))
+        if d is not None:
+            A[wi] = d
+
     hi = li["head"]
     if s2 in A and hi in A and rig.name[nk] == "neck":
         r_ln = QuaternionMath.multiply(
@@ -745,7 +768,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 6,
+        "retargetVersion": 7,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
