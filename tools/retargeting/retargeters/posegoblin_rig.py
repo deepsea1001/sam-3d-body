@@ -202,6 +202,16 @@ def rig_targets_from_mhr70(kp_cam: np.ndarray) -> dict[int, np.ndarray]:
         if bone_name is None:
             continue                                  # no mannequin equivalent: deliberate skip
         targets[rig.index_of_name[bone_name]] = np.asarray(p, float)   # KeyError propagates, never caught
+
+    # ruling 9 (amended): MHR-70's `root` is the exact hip MIDPOINT -- level
+    # with the hips, so pelvis->left_hip and pelvis->right_hip are always
+    # exactly 180 deg apart in this raw target. The rig's own pelvis sits
+    # ABOVE the hip line (105.2 deg apart in rest): same topology, different
+    # height, and a rotation cannot change the angle between two vectors, so
+    # a hip-midpoint pelvis target makes the pelvis's own Kabsch fit
+    # unsatisfiable by construction. Replace it with the rig's own
+    # above-the-hip-line offset, rebuilt in the target's own frame.
+    targets[rig.index_of_name["pelvis"]] = synthesize_pelvis_target(rig, targets)
     return targets
 
 
@@ -211,6 +221,67 @@ def _leg_len(points: dict, hip: int, knee: int, ankle: int) -> float:
     rig_targets_from_mhr70 are index-keyed (ruling 6)."""
     return (float(np.linalg.norm(points[knee] - points[hip]))
             + float(np.linalg.norm(points[ankle] - points[knee])))
+
+
+def _orthonormal_frame_from_hips_and_up(points: dict, left_hip: int, right_hip: int,
+                                         up_ref: int) -> tuple:
+    """right = direction from right_hip to left_hip; up = direction from the
+    hip midpoint to *up_ref*, re-orthonormalised against right (Gram-Schmidt
+    via cross products, so it's exact even when the raw up reference isn't
+    perfectly perpendicular to the hip line); fwd completes a right-handed
+    orthonormal basis. Returns (right, up, fwd, hip_mid)."""
+    hip_mid = (points[left_hip] + points[right_hip]) / 2
+    right = points[left_hip] - points[right_hip]
+    right = right / np.linalg.norm(right)
+    up_raw = points[up_ref] - hip_mid
+    fwd = np.cross(right, up_raw)
+    fwd = fwd / np.linalg.norm(fwd)
+    up = np.cross(fwd, right)
+    up = up / np.linalg.norm(up)
+    return right, up, fwd, hip_mid
+
+
+def synthesize_pelvis_target(rig: Rig, targets: dict[int, np.ndarray]) -> np.ndarray:
+    """Ruling 9 (amended) -- rebuild the rig's own "pelvis sits above the
+    hip line" offset in the TARGET's own frame, instead of leaving the
+    pelvis target at the raw hip midpoint MHR70Retargeter computes.
+
+    1. Rig rest: how far above the hip line the pelvis sits, expressed
+       scale-free (as a fraction of the rig's own leg length) in the rig's
+       own world-aligned right/up/forward axes.
+    2. Target: an orthonormal frame built from the TARGETS themselves --
+       never the rig's world axes, since the subject may be lying down or
+       inverted -- so the reconstructed offset points the anatomically
+       correct way regardless of the subject's orientation in camera space.
+    3. Re-express the rig's offset in that frame and scale by the target's
+       own leg length.
+
+    `targets` must already contain left_hip, right_hip, left/right knee and
+    ankle, and (spine_1 or neck); everything but the pelvis entry is read,
+    not written.
+    """
+    li = rig.index_of_name
+    lhip, rhip = li["left_hip"], li["right_hip"]
+    lknee, rknee = li["left_knee"], li["right_knee"]
+    lankle, rankle = li["left_ankle"], li["right_ankle"]
+    pelvis_i = li["pelvis"]
+
+    rest = rig.rest_world_p
+    hip_mid_rest = (rest[lhip] + rest[rhip]) / 2
+    offset_rest = rest[pelvis_i] - hip_mid_rest
+    rig_leg_len = np.mean([_leg_len(rest, lhip, lknee, lankle),
+                            _leg_len(rest, rhip, rknee, rankle)])
+    offset_frac = offset_rest / rig_leg_len
+
+    up_ref = li["spine_1"] if li["spine_1"] in targets else li["neck"]
+    right_t, up_t, fwd_t, hip_mid_t = _orthonormal_frame_from_hips_and_up(
+        targets, lhip, rhip, up_ref)
+    tgt_leg_len = np.mean([_leg_len(targets, lhip, lknee, lankle),
+                            _leg_len(targets, rhip, rknee, rankle)])
+
+    offset_target = (offset_frac[0] * right_t + offset_frac[1] * up_t
+                      + offset_frac[2] * fwd_t) * tgt_leg_len
+    return hip_mid_t + offset_target
 
 
 def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
@@ -255,7 +326,14 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
     # (not guessed): left_heel/right_heel/left_big_toe/right_big_toe.
     feet_idx = [li[n] for n in ("left_heel", "right_heel", "left_big_toe", "right_big_toe")]
     feet = [targets[i][1] for i in feet_idx if i in targets]
-    pelvis = targets[li["pelvis"]] * s
+
+    # ruling 10: pelvisPosition is the rig's REST pelvis position, not the
+    # subject's camera-space position scaled to rig units. A pose viewer
+    # shows the POSE, not the subject's translation through space -- the
+    # scaled camera-space position could (and for this fixture's Cyr-wheel
+    # capture, did) land the figure almost inside the fixed default camera.
+    # `s` is still needed for groundY, so it stays computed above.
+    pelvis = rig.rest_world_p[li["pelvis"]]
 
     from ..exporters.mannequin_exporter import MannequinExporter
     return {

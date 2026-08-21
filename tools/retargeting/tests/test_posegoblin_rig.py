@@ -136,11 +136,14 @@ _FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "mhr70_row.json")
 
 def test_rig_state_covers_every_rig_bone_and_serializes():
     import json
-    from retargeting.retargeters.posegoblin_rig import load_rig, rig_state_from_mhr70
+    from retargeting.retargeters.posegoblin_rig import (
+        load_rig, rig_state_from_mhr70, rig_targets_from_mhr70, solve_rig_locals, fk_world_positions)
     row = json.load(open(_FIXTURE))
     kp = np.asarray(row["mhr70_xyz"], np.float32).reshape(70, 3)
     st = rig_state_from_mhr70(kp)
     rig = load_rig()
+    li = rig.index_of_name
+    raw_targets = rig_targets_from_mhr70(kp)
     # ruling 5: pose is NAME-keyed (PoseGoblin reads state.pose[child.name]);
     # the two "joint7" bones collapse to a single entry, last-one-wins in
     # rig.order. 73 unique NAMES out of 74 bones -- not set(rig.order),
@@ -154,15 +157,61 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     # into the _x slot) -- the global constraint is that [w,x,y,z] -> three.js
     # {_x,_y,_z,_w} conversion happens ONLY at serialization, so verify it did
     # that correctly for a bone whose value is independently recomputable.
-    from retargeting.retargeters.posegoblin_rig import rig_targets_from_mhr70, solve_rig_locals
-    expected_pelvis_q = solve_rig_locals(rig, rig_targets_from_mhr70(kp))[rig.index_of_name["pelvis"]]
+    expected_pelvis_q = solve_rig_locals(rig, raw_targets)[li["pelvis"]]
     assert q["_w"] == pytest.approx(float(expected_pelvis_q[0]), abs=1e-9)
     assert q["_x"] == pytest.approx(float(expected_pelvis_q[1]), abs=1e-9)
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
     assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 2
     json.dumps(st)                                   # wire-safe, no numpy leaks
-    assert st["pelvisPosition"]["y"] > 2.0           # rig units (~10), not meters (~1)
+
+    # ruling 10: pelvisPosition is the rig's REST pelvis position -- a pose
+    # viewer shows the POSE, not the subject's translation through camera
+    # space. Ground truth from every human-posed capture:
+    # {x: 0, y: 10.478578602247456, z: 0}, identical to the rig's own rest.
+    rest_pelvis = rig.rest_world_p[li["pelvis"]]
+    assert st["pelvisPosition"]["x"] == pytest.approx(float(rest_pelvis[0]), abs=1e-9)
+    assert st["pelvisPosition"]["y"] == pytest.approx(float(rest_pelvis[1]), abs=1e-9)
+    assert st["pelvisPosition"]["z"] == pytest.approx(float(rest_pelvis[2]), abs=1e-9)
+
+    def _chain_len(points, hip, knee, ankle):
+        return (float(np.linalg.norm(points[knee] - points[hip]))
+                + float(np.linalg.norm(points[ankle] - points[knee])))
+
+    # ruling 10 note: `s` (leg-length scale) is no longer used for
+    # pelvisPosition, but it is still ruling 10's explicitly-kept sole input
+    # to groundY -- independently recompute both so that's still checked
+    # (it previously had no committed assertion at all).
+    rig_leg = np.mean([
+        _chain_len(rig.rest_world_p, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _chain_len(rig.rest_world_p, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    tgt_leg = np.mean([
+        _chain_len(raw_targets, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _chain_len(raw_targets, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    s = rig_leg / tgt_leg
+    feet_idx = [li[n] for n in ("left_heel", "right_heel", "left_big_toe", "right_big_toe")]
+    expected_ground_y = min(raw_targets[i][1] for i in feet_idx) * s
+    assert st["groundY"] == pytest.approx(expected_ground_y, rel=1e-6)
+
+    # ruling 8: pose-invariant "rig units, not metres" check. The original
+    # `pelvisPosition.y > 2.0` heuristic silently assumed an upright subject
+    # and broke on this fixture's Cyr-wheel (inverted-in-a-hoop) capture --
+    # a low camera-relative pelvis there was CORRECT, not a units bug. FK
+    # preserves the rig's own bone lengths under ANY pose (pure rotation of
+    # fixed-length rest offsets), so check the SOLVED skeleton's
+    # hip->knee->ankle chain length against the rig's rest leg length
+    # instead of any position component -- true regardless of which way up
+    # the subject is.
+    got = fk_world_positions(rig, solve_rig_locals(rig, raw_targets))
+    solved_leg = np.mean([
+        _chain_len(got, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _chain_len(got, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    assert abs(solved_leg - rig_leg) / rig_leg < 0.05, (
+        f"solved leg length {solved_leg:.4f} vs rig rest leg length {rig_leg:.4f} "
+        "-- not in rig units")
 
 
 def test_solved_directions_land_on_targets_for_a_real_row():
@@ -179,47 +228,120 @@ def test_solved_directions_land_on_targets_for_a_real_row():
     exactly (the parent itself must have a target, the child must have a
     target, and both the rest-bone and target-bone vectors must be
     non-degenerate) -- so the split is read off rig structure + target
-    availability, never off a measured cosine."""
+    availability, never off a measured cosine.
+
+    Ruling 9 (amended): pelvis->left_hip / pelvis->right_hip are NOT
+    excluded. rig_targets_from_mhr70 now synthesises the pelvis target
+    above the hip line (matching the rig's own rest topology, ruling 9)
+    instead of leaving it at MHR-70's raw hip MIDPOINT, so the pelvis's
+    Kabsch fit is no longer fighting an unsatisfiable topology mismatch.
+    Both bones go through the SAME gate as everything else -- no special
+    case. A diagnostic (not exclusionary) structural-mismatch check is kept
+    to CONFIRM the "structurally unsatisfiable" category is empty; if it
+    ever isn't, that bone is still reported here, never silently dropped.
+
+    Ruling 11: bones whose PARENT has no MHR-70 mapping at all (e.g. the
+    toe tips: their parent left_toes/right_toes has none) can't be gated
+    against a real target -- listed under an explicit UNGATED heading
+    instead of silently vanishing from the table, alongside two more
+    UNGATED categories for the same underlying reason (absence must never
+    be the only evidence): a bone itself lacking a target (its parent has
+    one, but there's nothing to point IT at), and a degenerate rest/target
+    vector (checked for completeness; empty in practice)."""
     import json
     from retargeting.retargeters.posegoblin_rig import (
         load_rig, rig_targets_from_mhr70, solve_rig_locals, fk_world_positions)
     row = json.load(open(_FIXTURE))
     kp = np.asarray(row["mhr70_xyz"], np.float32).reshape(70, 3)
     rig = load_rig()
+    li = rig.index_of_name
     targets = rig_targets_from_mhr70(kp)
     got = fk_world_positions(rig, solve_rig_locals(rig, targets))
     solved = [i for i in rig.order if rig.solve[i]]
 
-    def usable_child_count(n):
-        """Exactly solve_rig_locals's own `pairs`-building gate, count only."""
-        if n not in targets:
-            return 0
-        count = 0
-        for c in rig.children[n]:
-            if c not in targets:
+    def _ang(a, b):
+        return float(np.degrees(np.arccos(np.clip(
+            (a @ b) / (np.linalg.norm(a) * np.linalg.norm(b)), -1, 1))))
+
+    # Ruling 9 evidence: the raw hip MIDPOINT (what the pelvis target used
+    # to be -- always exactly 180 deg between the two hip directions, by
+    # construction, for any hip positions whatsoever) vs. the synthesised
+    # pelvis actually used for solving.
+    lhip, rhip = li["left_hip"], li["right_hip"]
+    raw_mid = (targets[lhip] + targets[rhip]) / 2
+    angle_before = _ang(targets[lhip] - raw_mid, targets[rhip] - raw_mid)
+    angle_after = _ang(targets[lhip] - targets[li["pelvis"]], targets[rhip] - targets[li["pelvis"]])
+    rest_angle = _ang(rig.rest_world_p[lhip] - rig.rest_world_p[li["pelvis"]],
+                       rig.rest_world_p[rhip] - rig.rest_world_p[li["pelvis"]])
+    print(f"\nangle(pelvis->left_hip, pelvis->right_hip): before={angle_before:.2f} deg "
+          f"(raw hip midpoint), after={angle_after:.2f} deg (synthesised), "
+          f"rig rest={rest_angle:.2f} deg")
+    assert angle_before > 179.0, "sanity: the raw hip-midpoint target is ~180 deg by construction"
+    assert angle_after < 150.0, "pelvis target synthesis did not meaningfully move off the hip midpoint"
+
+    FITTED_FLOOR = 0.90
+    MISMATCH_LIMIT_DEG = 2 * np.degrees(np.arccos(FITTED_FLOOR))   # ~51.68 deg; see module docstring math
+
+    def _structural_mismatch_deg(n, c, siblings):
+        """Diagnostic only, not an exclusion (ruling 9 amended): the worst
+        rest-vs-target pairwise-angle mismatch between bone c and any OTHER
+        usable sibling under n. By the spherical triangle inequality,
+        error(c)+error(sibling) >= this mismatch for ANY rotation, so a
+        value over MISMATCH_LIMIT_DEG would mean no rotation could put both
+        inside the FITTED floor -- kept only to CONFIRM that no longer
+        happens, not to remove a bone from the gate."""
+        rb_c = rig.rest_world_p[c] - rig.rest_world_p[n]
+        tb_c = targets[c] - targets[n]
+        worst = 0.0
+        for cp in siblings:
+            if cp == c:
                 continue
-            rb = rig.rest_world_p[c] - rig.rest_world_p[n]
-            tb = targets[c] - targets[n]
-            if np.linalg.norm(rb) > 1e-6 and np.linalg.norm(tb) > 1e-6:
-                count += 1
-        return count
+            rb_cp = rig.rest_world_p[cp] - rig.rest_world_p[n]
+            tb_cp = targets[cp] - targets[n]
+            worst = max(worst, abs(_ang(rb_c, rb_cp) - _ang(tb_c, tb_cp)))
+        return worst
 
     rows = []
     bad = {}
+    structurally_flagged = []       # ruling 9 (amended): expected EMPTY
+    no_parent_target = []           # ruling 11
+    no_own_target = []              # additional: bone itself has no target
+    degenerate = []                 # both targeted, but a vector is ~0 length
+
     for n in solved:
-        if n not in targets:
-            continue
+        siblings = []
+        if n in targets:
+            for c in rig.children[n]:
+                if c not in targets:
+                    continue
+                rb = rig.rest_world_p[c] - rig.rest_world_p[n]
+                tb = targets[c] - targets[n]
+                if np.linalg.norm(rb) > 1e-6 and np.linalg.norm(tb) > 1e-6:
+                    siblings.append(c)
+
         for c in rig.children[n]:
-            if c not in targets:
+            label = f"{rig.name[n]}->{rig.name[c]}"
+            if n not in targets:
+                no_parent_target.append(label)                 # ruling 11
                 continue
+            if c not in targets:
+                no_own_target.append(label)
+                continue
+            if c not in siblings:
+                degenerate.append(label)
+                continue
+
             tb = targets[c] - targets[n]
             gb = got[c] - got[n]
-            if np.linalg.norm(tb) < 1e-6 or np.linalg.norm(gb) < 1e-6:
-                continue
             cos = float(tb @ gb / (np.linalg.norm(tb) * np.linalg.norm(gb)))
-            kind = "EXACT" if usable_child_count(n) == 1 else "FITTED"
-            floor = 0.99 if kind == "EXACT" else 0.90
-            label = f"{rig.name[n]}->{rig.name[c]}"
+            kind = "EXACT" if len(siblings) == 1 else "FITTED"
+            floor = 0.99 if kind == "EXACT" else FITTED_FLOOR
+
+            if kind == "FITTED":
+                mismatch = _structural_mismatch_deg(n, c, siblings)
+                if mismatch > MISMATCH_LIMIT_DEG:
+                    structurally_flagged.append((label, round(cos, 4), round(mismatch, 1)))
+
             rows.append((label, kind, round(cos, 4), floor))
             if cos < floor:
                 bad[f"{label} ({kind})"] = round(cos, 4)
@@ -228,10 +350,58 @@ def test_solved_directions_land_on_targets_for_a_real_row():
     for label, kind, cos, floor in rows:
         print(f"{label:<28}{kind:<8}{cos:>8}{floor:>8}")
 
+    print("\nUNGATED (structurally unsatisfiable) -- expected EMPTY, ruling 9 amended:")
+    for label, cos, mismatch in structurally_flagged:
+        print(f"  {label:<28}cosine={cos}  rest/target pairwise-angle mismatch={mismatch} deg")
+
+    print("\nUNGATED (no target for parent):")
+    for label in no_parent_target:
+        print(f"  {label}")
+
+    print("\nUNGATED (bone itself has no target):")
+    for label in no_own_target:
+        print(f"  {label}")
+
+    if degenerate:
+        print("\nUNGATED (degenerate rest or target vector):")
+        for label in degenerate:
+            print(f"  {label}")
+
     # Positive control (CLAUDE.md rule 1): "0 bad" is indistinguishable from
     # "the loop never matched anything" -- e.g. if targets were keyed wrong
     # (name instead of index), `n not in targets` would be vacuously true for
     # every n and this would trivially "pass" having tested nothing. Prove
     # the gate actually ran over a real, non-trivial set of bones.
     assert len(rows) >= 20, f"only {len(rows)} bone-directions were testable -- the gate did not run"
+    assert not structurally_flagged, (
+        "ruling 9 (amended) expected no structurally unsatisfiable bones, "
+        f"found: {structurally_flagged} -- report, do not exclude or tune"
+    )
     assert not bad, f"bones off their floor: {bad}"
+
+
+def test_synthesized_pelvis_target_reproduces_rig_rest_topology():
+    """Ruling 9 (amended) evidence, pinned against the RIG rather than a
+    measurement: feed the rig's own rest world positions in AS the targets
+    (the self-consistent case -- no pose, no camera, nothing to reconstruct
+    except the rig's own fixed geometry) and confirm the synthesised pelvis
+    lands back on the rig's actual rest pelvis position, within a small
+    tolerance. (Not exactly zero: the target-side orthonormal frame is
+    built from spine_1's direction, which has a small forward lean of its
+    own in the rig's rest pose, so re-deriving right/up/forward from it
+    doesn't perfectly reproduce the world axes bit-for-bit.)"""
+    from retargeting.retargeters.posegoblin_rig import load_rig, synthesize_pelvis_target, _leg_len
+    rig = load_rig()
+    li = rig.index_of_name
+    synthesized = synthesize_pelvis_target(rig, dict(rig.rest_world_p))
+    rest_pelvis = rig.rest_world_p[li["pelvis"]]
+    rig_leg_len = np.mean([
+        _leg_len(rig.rest_world_p, li["left_hip"], li["left_knee"], li["left_ankle"]),
+        _leg_len(rig.rest_world_p, li["right_hip"], li["right_knee"], li["right_ankle"]),
+    ])
+    err = float(np.linalg.norm(synthesized - rest_pelvis))
+    assert err / rig_leg_len < 0.02, (
+        f"synthesized pelvis {synthesized} vs actual rest pelvis {rest_pelvis} "
+        f"-- error {err:.4f} rig units ({err / rig_leg_len:.2%} of leg length), "
+        "expected near-zero at self-consistency (targets == rig's own rest)"
+    )
