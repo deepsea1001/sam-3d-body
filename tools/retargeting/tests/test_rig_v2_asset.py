@@ -70,6 +70,46 @@ def test_v2_shape_and_topology():
             assert not b["solve"]
 
 
+def _rest_world_p_mismatches(d, v1):
+    """C2: the 74 v1 bones' rest_world_p is copied verbatim into v2, never
+    recomputed (the 40 finger bones' values are already true world geometry);
+    each of the ten groups' rest_world_p equals its own wrist's (`parent` IS
+    the wrist index, by schema -- the group's local position is ~0). Returns
+    the offending names; [] means clean.
+
+    Neither half is covered by _reproduce below -- it FKs each node's local
+    TRS and never reads rest_world_p at all -- so this is C2's only
+    regression coverage under pytest."""
+    bones = d["bones"]
+    bad = [bones[i]["name"] for i in range(74)
+           if bones[i]["rest_world_p"] != v1[i]["rest_world_p"]]
+    for g in bones[74:]:
+        if g["rest_world_p"] != bones[g["parent"]]["rest_world_p"]:
+            bad.append(g["name"])
+    return bad
+
+
+def test_v2_rest_world_p_matches_v1_and_own_wrist():
+    d = json.loads(V2.read_text())
+    v1 = json.loads((BP / "posegoblin_rig_v1.json").read_text())["bones"]
+    assert _rest_world_p_mismatches(d, v1) == []
+
+
+def test_rest_world_p_check_can_fail_on_a_mutated_copy():
+    """Positive control (CLAUDE.md rule 1): _rest_world_p_mismatches must be
+    proven capable of a non-empty result for EACH half of C2, not just
+    trusted to pass because the real asset happens to be correct."""
+    v1 = json.loads((BP / "posegoblin_rig_v1.json").read_text())["bones"]
+
+    d = json.loads(V2.read_text())
+    d["bones"][14]["rest_world_p"] = [0.0, 0.0, 0.0]  # left_thumb_1, wrong on purpose
+    assert _rest_world_p_mismatches(d, v1) == ["left_thumb_1"]
+
+    d = json.loads(V2.read_text())
+    d["bones"][74]["rest_world_p"] = [0.0, 0.0, 0.0]  # transform4, wrong on purpose
+    assert _rest_world_p_mismatches(d, v1) == ["transform4"]
+
+
 def _reproduce(d, probe):
     """FK each v2 node using the PROBE's own local TRS but the V2 asset's
     topology (parent indices, and the asset's stored group locals for group
