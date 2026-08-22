@@ -335,10 +335,19 @@ def test_no_invented_roll_on_any_fixture_row(source, monkeypatch):
 
     Parametrised over the spine because the clavicles hang off spine_2 and
     the roll they were inheriting was spine_2's -- so a fix that only held
-    under one spine mapping would be a coincidence, not a fix."""
+    under one spine mapping would be a coincidence, not a fix.
+
+    Since R15 the two CLAVICLES no longer reach this branch when `mhr_rots`
+    is present: they are anchored from the model's own chest-relative
+    rotation instead (`_anchor_deltas`), and their roll-freeness is pinned by
+    tests/test_clavicle_source.py, which owns that path. What is left here is
+    the two EYES -- so the per-row count drops from 4 to 2, and the clavicles
+    are asserted ABSENT-because-anchored rather than allowed to vanish
+    quietly. The fallback path, where the clavicles do still take this
+    branch, is covered by test_the_aim_path_clavicle_is_still_roll_free."""
     monkeypatch.setattr(PG, "SPINE_SOURCE", source)
     scored, worst = 0, (0.0, None)
-    swings = []
+    swings, names = [], set()
     for rid in ROWS:
         rots = _rots(rid)
         targets = rig_targets_from_mhr70(_kp(rid))
@@ -348,6 +357,7 @@ def test_no_invented_roll_on_any_fixture_row(source, monkeypatch):
             d = _local_delta(L, n)
             roll = _twist_deg(d, ax)
             swings.append(_swing_deg(d, ax))
+            names.add(RIG.name[n])
             scored += 1
             if roll > worst[0]:
                 worst = (roll, f"{rid[:8]} {RIG.name[n]}")
@@ -355,9 +365,45 @@ def test_no_invented_roll_on_any_fixture_row(source, monkeypatch):
                 f"{rid[:8]} {RIG.name[n]}: {roll:.3f} deg of roll about its own aim axis"
     # Positive controls: the branch must actually have been exercised, and
     # the locals must not be identity (which would make "roll == 0" vacuous).
-    assert scored == 4 * len(ROWS), f"expected 4 single-child bones per row, scored {scored}"
-    assert max(swings) > 20.0, f"every local is near-rest -- worst swing {max(swings):.2f} deg"
+    assert scored == 2 * len(ROWS), f"expected 2 single-child bones per row, scored {scored}"
+    assert names == {"left_eye", "right_eye"}, f"single-child aims are now {sorted(names)}"
+    # The clavicles left this branch for a REASON, and it must be the anchor
+    # -- not a target that quietly went missing.
+    rots = _rots(next(iter(ROWS)))
+    targets = rig_targets_from_mhr70(_kp(next(iter(ROWS))))
+    anchors = PG._anchor_deltas(RIG, targets, WR, rots)
+    for side in ("left", "right"):
+        assert I[f"{side}_clavicle"] in anchors, f"{side}_clavicle is neither aimed nor anchored"
+    # Vacuity guard, not a quality bar: "roll == 0" would be trivially true of
+    # an identity local. Re-calibrated for R15's population -- with the
+    # clavicles gone to the anchor path the two eyes are what is left, and
+    # their worst swing over these rows measures 9.33 deg (it was 56 deg while
+    # the clavicles were here). The roll assertion above is untouched.
+    assert max(swings) > 5.0, f"every local is near-rest -- worst swing {max(swings):.2f} deg"
     print(f"\n{source}: {scored} single-child locals, worst roll {worst[0]:.2e} deg ({worst[1]})")
+
+
+def test_the_aim_path_clavicle_is_still_roll_free():
+    """fb42e71's contract on the path the clavicle still takes: no `mhr_rots`,
+    so no rotations to transfer, so the single-child aim -- and it must still
+    put no roll in the local.
+
+    Kept separate from the parametrised test above because that one now finds
+    only the eyes: with rotations present the clavicles are anchored (R15).
+    Positive control: the locals must not be near-rest, or "roll == 0" is
+    vacuous here too."""
+    worst, swings = 0.0, []
+    for rid in ROWS:
+        L = solve_rig_locals(RIG, rig_targets_from_mhr70(_kp(rid)))
+        for side in ("left", "right"):
+            ci, si = I[f"{side}_clavicle"], I[f"{side}_shoulder"]
+            _, ax = _aim_axis(ci, si)
+            d = _local_delta(L, ci)
+            worst = max(worst, _twist_deg(d, ax))
+            swings.append(_swing_deg(d, ax))
+    assert len(swings) == 2 * len(ROWS)                      # positive control
+    assert max(swings) > 20.0, f"every clavicle is near-rest, worst {max(swings):.2f} deg"
+    assert worst < ROLL_FREE_TOL_DEG, f"the aim path invented {worst:.4f} deg of roll"
 
 
 def test_the_clavicle_fix_moves_no_joint_in_the_world():
@@ -374,6 +420,12 @@ def test_the_clavicle_fix_moves_no_joint_in_the_world():
     and the shoulder's local is rebuilt underneath it (the shoulder is
     world-ANCHORED by _anchor_deltas, so its world orientation is the same
     in both parameterisations and its local absorbs the difference).
+
+    Run WITHOUT `mhr_rots` since R15: with rotations present the clavicle no
+    longer takes the aim path at all (it is anchored from the model's own
+    chest-relative rotation), so there would be no aim to re-parameterise.
+    This is the fallback path -- rows with no `mhr_params_npz` blob -- and
+    `_aim_delta`'s contract has to keep holding there.
 
     The displacement bound is DERIVED, not chosen. The two deltas differ by
     a roll about `rest_world_p`'s clavicle->shoulder direction, while FK
@@ -404,7 +456,7 @@ def test_the_clavicle_fix_moves_no_joint_in_the_world():
         # and unrelated to the clavicle; removed from both poses rather than
         # absorbed into a tolerance.
         L = {i: QM.normalize(q)
-             for i, q in solve_rig_locals(RIG, targets, mhr_rots=rots).items()}
+             for i, q in solve_rig_locals(RIG, targets).items()}
         W = fk_world_orientations(RIG, {**RIG.rest_local_q, **L})
         new = fk_world_positions(RIG, {**RIG.rest_local_q, **L})
         for side in ("left", "right"):
@@ -497,26 +549,56 @@ def test_the_aim_is_exact_even_when_the_parent_has_already_landed_it():
 
 
 def test_the_arm_still_lands_on_its_targets():
-    """Machine-gate style direction check over every fixture row: with the
-    roll gone, clavicle->shoulder is still EXACT (it is a single-child aim,
-    which the solver satisfies outright) and shoulder->elbow / elbow->wrist
-    still meet the 0.90 fitted floor the whole-rig gate uses."""
-    scored, bad = 0, {}
-    for rid in ROWS:
-        rots = _rots(rid)
-        targets = rig_targets_from_mhr70(_kp(rid))
-        P = fk_world_positions(RIG, {**RIG.rest_local_q,
-                                     **solve_rig_locals(RIG, targets, mhr_rots=rots)})
-        for side in ("left", "right"):
-            for a, b, floor in ((f"{side}_clavicle", f"{side}_shoulder", 0.9999),
-                                (f"{side}_shoulder", f"{side}_elbow", 0.90),
-                                (f"{side}_elbow", f"{side}_wrist", 0.90)):
-                ai, bi = I[a], I[b]
-                got = P[bi] - P[ai]
-                want = np.asarray(targets[bi], float) - np.asarray(targets[ai], float)
-                cos = float(got @ want / (np.linalg.norm(got) * np.linalg.norm(want)))
-                scored += 1
-                if cos < floor:
-                    bad[f"{rid[:8]} {a}->{b}"] = round(cos, 4)
-    assert scored == 6 * len(ROWS), f"positive control: scored {scored} edges"
-    assert not bad, f"arm directions below floor: {bad}"
+    """Machine-gate style direction check over every fixture row, SPLIT BY
+    PATH -- because R15 changed what the clavicle promises.
+
+    FALLBACK (`mhr_rots=None`): the clavicle is still a single-child aim and
+    still satisfies it outright, so clavicle->shoulder keeps the EXACT floor.
+
+    TRANSFER (`mhr_rots` present): it does NOT. The clavicle now takes the
+    model's own chest-relative rotation, which lands the shoulder where the
+    MODEL puts it rather than exactly on MHR-70's shoulder keypoint, and the
+    two disagree -- the mannequin's rest shoulder sits 26.5 deg off MHR's.
+    That residual is the price of not manufacturing 20-30 deg of invented
+    protraction to close a rest gap (tests/test_clavicle_source.py), and
+    Scott accepted it knowingly. Measured over these sixteen rows: median
+    cosine 0.9464, worst 0.8315 (33.7 deg, row 9029c8a8 right). Pinned as a
+    REGRESSION BOUND at 0.80, named -- not as an aspiration, and never
+    applied to the fallback path where the old guarantee still holds.
+
+    What does NOT move either way is everything below the shoulder: the
+    shoulder, elbow and wrist are world-anchored from the arm keypoints, so
+    shoulder->elbow and elbow->wrist stay EXACT on both paths. Measured over
+    1800 corpus rows: cosine 1.000000, all 3600."""
+    seen = {}
+    for label, kw, clav_floor in (("fallback", {}, 0.9999),
+                                  ("transfer", {"mhr_rots": True}, 0.80)):
+        scored, bad, clav = 0, {}, []
+        for rid in ROWS:
+            targets = rig_targets_from_mhr70(_kp(rid))
+            L = solve_rig_locals(RIG, targets,
+                                 **({"mhr_rots": _rots(rid)} if kw else {}))
+            P = fk_world_positions(RIG, {**RIG.rest_local_q, **L})
+            for side in ("left", "right"):
+                for a, b, floor in ((f"{side}_clavicle", f"{side}_shoulder", clav_floor),
+                                    (f"{side}_shoulder", f"{side}_elbow", 0.90),
+                                    (f"{side}_elbow", f"{side}_wrist", 0.90)):
+                    ai, bi = I[a], I[b]
+                    got = P[bi] - P[ai]
+                    want = np.asarray(targets[bi], float) - np.asarray(targets[ai], float)
+                    cos = float(got @ want / (np.linalg.norm(got) * np.linalg.norm(want)))
+                    scored += 1
+                    if a.endswith("_clavicle"):
+                        clav.append(cos)
+                    if cos < floor:
+                        bad[f"{rid[:8]} {a}->{b}"] = round(cos, 4)
+        assert scored == 6 * len(ROWS), f"positive control: scored {scored} edges"
+        assert not bad, f"{label}: arm directions below floor: {bad}"
+        seen[label] = np.array(clav)
+        print(f"\n{label}: clavicle->shoulder cosine median {np.median(seen[label]):.4f} "
+              f"worst {seen[label].min():.4f}")
+
+    # The split is the point, so assert the two paths really are different --
+    # otherwise the transfer's looser floor would be measuring the fallback.
+    assert seen["fallback"].min() > 0.9999
+    assert seen["transfer"].min() == pytest.approx(0.8315, abs=0.01)

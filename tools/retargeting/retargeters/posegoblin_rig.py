@@ -266,6 +266,15 @@ _MHR_SPINE_1_HYBRID = 36   # c_spine2 -- spine_1 under SPINE_SOURCE_HYBRID.
 _MHR_ROOT = 1       # `root`, the MHR joint the mannequin's pelvis corresponds
                     # to; the parent end of the real pelvis->chest rotation.
 
+# The two clavicles, and the MHR joint that is the parent of BOTH of them.
+# _MHR_CHEST is c_spine3 -- the same row that drives spine_2, and for the same
+# reason: MHR's l_clavicle and r_clavicle hang off c_spine3 exactly as the
+# mannequin's two clavicles hang off spine_2. That one-to-one correspondence
+# is what makes a CHEST-RELATIVE transfer well posed; see the clavicle block
+# in _anchor_deltas.
+_MHR_CHEST = _MHR_SPINE_2
+_MHR_CLAVICLE_ROW = {"left_clavicle": 74, "right_clavicle": 38}
+
 # Where the mannequin's spine comes from when the caller supplies
 # `mhr_rots`. Four named mappings, one switch, so every comparison in the
 # task-6b report stays reproducible instead of living in a scratch branch:
@@ -549,6 +558,37 @@ def _pair_delta(a1, a2, b1, b2):
         e2 = e2 / n2
         out.append(np.column_stack([e1, e2, np.cross(e1, e2)]))
     return QuaternionMath.from_matrix(out[1] @ out[0].T)
+
+
+def _swing_about(q, axis):
+    """*q* with its twist about *axis* removed -- the swing half of a
+    swing-twist decomposition, in the projection form
+    VectorMath.swing_twist_decompose uses.
+
+    `q = swing . twist`, so the swing takes *axis* exactly where q takes it
+    and carries no rotation about it. Used to drop the model's clavicle ROLL
+    before transferring the rest of its rotation: the mannequin's clavicle has
+    no roll degree of freedom to receive one (Scott's rig, and `_aim_delta`'s
+    contract since fb42e71), and rotation about a bone's own long axis is the
+    component neither skeleton's shoulder position can see anyway.
+
+    A 180 deg swing leaves the twist genuinely undefined (the twist part
+    collapses to zero norm); *q* is returned unchanged there rather than
+    fabricating an axis, which is the same rule _pair_delta follows.
+    """
+    q = np.asarray(q, float)
+    if q[0] < 0:
+        q = -q
+    axis = np.asarray(axis, float)
+    n = np.linalg.norm(axis)
+    if n < 1e-9:
+        return q
+    axis = axis / n
+    tw = np.array([q[0], *(np.dot(q[1:], axis) * axis)])
+    ntw = np.linalg.norm(tw)
+    if ntw < 1e-9:
+        return q
+    return QuaternionMath.multiply(q, QuaternionMath.conjugate(tw / ntw))
 
 
 def _min_swing_q(a, b):
@@ -973,6 +1013,54 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                     A[li["spine_1"]] = _slerp(A[pv], chest, _SPINE1_SHARE)
             else:
                 A[li["spine_1"]] = _slerp(A[pv], chest, _SPINE1_SHARE)
+
+    # Clavicles: the MODEL's own rotation, CHEST-RELATIVE, composed onto the
+    # spine_2 we actually solved. Same transfer pattern as the relative spine
+    # above (root-relative onto our pelvis), one joint further out, and for the
+    # same reason -- an ABSOLUTE transfer would land the clavicle right in
+    # world terms and wrong relative to the chest we placed.
+    #
+    # What this replaces, and why. Left to the generic path a clavicle is a
+    # single-child aim: point the rig's rest clavicle->shoulder direction at
+    # MHR-70's shoulder keypoint. That asks one rotation to do two jobs -- to
+    # express the pose, AND to close the gap between where the MANNEQUIN's
+    # shoulder sits at rest and where MHR's does, 26.5 deg on the left. The
+    # gap is a constant of the two skeletons; the rotation that closes it is
+    # not, because it depends on the pose and on the parent. So it lands as a
+    # different invented swing every row and a different one per side, and the
+    # corpus median |clavicle local| of 23 deg IS that bias, not anatomy.
+    # Measured on the two rows Scott named (tests/test_clavicle_source.py):
+    # on a SYMMETRIC double-biceps pose the aim gave left 24.5 deg mostly
+    # forward against right 18.5 deg mostly BACKWARD, where the model's own
+    # rotations say 14.6 / 9.5, elevation-dominant and symmetric; on a plain
+    # standing pose it swung the left clavicle 33 deg, 31 of it protraction.
+    # He reads the result as a dislocated shoulder ball.
+    #
+    # MHR's clavicles hang off c_spine3, which is also the row driving
+    # spine_2, so the correspondence is one-to-one and the relative rotation
+    # needs no re-basing between skeletons.
+    #
+    # SWING-ONLY: the model's twist about the mannequin's own clavicle long
+    # axis is stripped first. That axis is unobservable from the shoulder
+    # POSITION (see _aim_delta), the rig has no clavicle-roll DOF to receive
+    # it, and it is what fb42e71 established must not appear in this local.
+    # Measured over all eighteen fixture rows the model carries a median 3.5
+    # deg of it, so this discards noise rather than signal -- pinned by
+    # test_how_much_model_roll_is_discarded, which fails if that grows.
+    #
+    # Without `mhr_rots` there is nothing to transfer and the aim path stays.
+    if mhr_rots is not None and s2 in A:
+        chest_inv = QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_CHEST))
+        for bone, row in _MHR_CLAVICLE_ROW.items():
+            ci = li[bone]
+            child = rig.children[ci]
+            if len(child) != 1:
+                continue              # re-rigged: the long axis is no longer defined
+            axis = _unit_or_none(rest[child[0]] - rest[ci])
+            if axis is None:
+                continue
+            rel = QuaternionMath.multiply(chest_inv, _mhr_delta_q(mhr_rots, row))
+            A[ci] = QuaternionMath.multiply(A[s2], _swing_about(rel, axis))
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his

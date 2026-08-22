@@ -148,20 +148,42 @@ def test_hybrid_keeps_spine_2_on_v15s_landmark_anchor(monkeypatch):
 
 
 def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
-    """SPINE_SOURCE_V15 with mhr_rots present == the mhr_rots=None spine,
-    exactly -- while the fingers still solve from those same rotations.
+    """SPINE_SOURCE_V15 with mhr_rots present == the mhr_rots=None SPINE,
+    exactly -- while the other v16 rotation transfers still run off those same
+    rotations.
 
     This is the fallback the decision rule reserves ("v16 ships its fingers
-    and its plumbing, the spine unchanged"), so it must be a real identity
-    and not merely a close one."""
+    and its plumbing, the spine unchanged"), so the spine half must be a real
+    identity and not merely a close one.
+
+    The fingers were always excluded from that identity -- they are a separate
+    transfer keyed on `mhr_rots`, not on SPINE_SOURCE -- and since R15 the two
+    CLAVICLES are too: they take the model's chest-relative rotation whenever
+    rotations are present, whatever the spine mapping is. The two SHOULDERS
+    follow because their local is expressed against the clavicle's world
+    frame. That is asserted here as an exact set, so a transfer that started
+    keying on SPINE_SOURCE, or one that reached a bone further, fails here."""
     v15 = _solve(DEV_ROW, None)
     monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
     both = _solve(DEV_ROW, _rots(DEV_ROW))
 
     # Index-keyed, never name-keyed: two rig bones share the name "joint7".
     changed = {i for i in v15 if not np.allclose(v15[i], both[i], atol=1e-12)}
-    assert changed == set(), \
-        f"v15 source changed {sorted(RIG.name[i] for i in changed)}"
+    expected = {I[n] for n in ("left_clavicle", "right_clavicle",
+                               "left_shoulder", "right_shoulder")}
+    assert changed == expected, (
+        f"unexpected: {sorted(RIG.name[i] for i in changed - expected)}, "
+        f"missing: {sorted(RIG.name[i] for i in expected - changed)}")
+    # The SPINE itself -- and everything else hanging off it -- is untouched,
+    # which is the whole content of this fallback.
+    for name in ("pelvis", "spine_1", "spine_2", "neck", "head"):
+        assert np.allclose(v15[I[name]], both[I[name]], atol=1e-12), name
+    # ...and the shoulders moved only in their LOCAL: their world orientation
+    # comes from the arm keypoints, which no rotation transfer touches.
+    w15, wboth = _world(v15), _world(both)
+    for name in ("left_shoulder", "right_shoulder"):
+        assert _quat_deg(v15[I[name]], both[I[name]]) > 1e-6            # control
+        assert _quat_deg(w15[I[name]], wboth[I[name]]) < 1e-6, name
     phalanges = {i for i in RIG.order
                  if ("_thumb_" in RIG.name[i] or "_finger_" in RIG.name[i])
                  and not RIG.name[i].endswith("_tip")}
