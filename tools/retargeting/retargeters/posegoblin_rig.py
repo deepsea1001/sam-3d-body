@@ -43,10 +43,11 @@ Those 30 phalanges ARE posed since v16 task 5, when the caller supplies
 `mhr_rots` -- from the MHR model's own hand rotations, never from
 keypoints. Not by the world-DELTA transfer the spine uses: that is correct
 only while the two rigs' rests nearly agree (7.6-31.6 deg for the spine)
-and their rest FINGER directions are 37-75 deg apart, which made it bend
-fingers sideways and twist them. Instead the joint's BEND MAGNITUDE --
-frame-independent, and so immune to that mismatch -- is transferred as a
-signed angle about the rig's OWN measured flexion axis
+and their rest FINGER directions are far apart -- 3-49 deg, median 27, in
+each skeleton's own anatomical hand frame, and 3-161 deg before R14 -- which
+made it bend fingers sideways and twist them. Instead the joint's BEND
+MAGNITUDE -- frame-independent, and so immune to that mismatch -- is
+transferred as a signed angle about the rig's OWN measured flexion axis
 (`bind_poses/mannequin_finger_axes.json`, extracted from PoseGoblin's
 shipped hand presets by `tools_extract_finger_axes.py`; not +X everywhere,
 the thumb disproves that). Its sign comes from an anatomical hand frame
@@ -850,8 +851,9 @@ _MHR_FINGER_ROWS = {
 #
 # _FINGER_BEND_LIMIT_DEG: bends beyond this are not a hand. Calibrated
 # against measured range of motion, not guessed -- the largest full-fist arc
-# measured anywhere on this rig is 108.0 deg (Relaxed->Fist; 100.4 deg from
-# the asset's own rest, mannequin_finger_axes.json), and the largest
+# measured anywhere on this rig is 108.0 deg (left_index_finger_2; the same
+# 108.0 from the asset's own rest, mannequin_finger_axes.json, and from
+# Relaxed->Fist -- R14 brought those into agreement), and the largest
 # per-joint bend anywhere in the six fixture rows is 51.6 deg. 135 is 1.25x
 # the former and 2.6x the latter, so it cannot bite real data: measured
 # headroom over the whole fixture is 83.4 deg.
@@ -990,34 +992,44 @@ def _is_proper_rotation(m) -> bool:
             and abs(float(np.linalg.det(m)) - 1.0) <= _ROT_ATOL)
 
 
-def _finger_bends(mhr_rots: np.ndarray) -> dict:
+def _finger_bends(mhr_rots: np.ndarray, rig: Rig | None = None) -> dict:
     """Per phalange, `(signed flexion angle in RADIANS, |bend| in DEGREES)`.
 
     The bend is `conj(Delta(parent)) o Delta(row)` -- the joint's rotation
     beyond its own rest, with the parent being the MHR WRIST for a `_1` and
     the previous phalange otherwise. Its MAGNITUDE is a frame-independent
     scalar and therefore immune to the rest-geometry mismatch (the two rigs'
-    rest finger directions are 37-75 deg apart) that made a world-DELTA
-    transfer bend fingers sideways.
+    rest finger directions are 3-49 deg apart, median 27) that made a
+    world-DELTA transfer bend fingers sideways.
 
     The signed angle is that rotation projected onto the rig's own flexion
     axis for the bone (`_finger_flex_refs`): `angle * dot(axis, ref)`. The
     projection, rather than magnitude-times-sign, so a rotation that is
-    mostly NOT flexion contributes mostly no flexion -- it matters only for
-    the thumb MCP, whose |alignment| runs 0.45-0.63 while all 28 other
-    joint/side pairs sit at 0.87-0.997 (median 0.979 over the six fixture
-    rows). Against swing-twist about the same axis it differs by at most
-    1.2 deg anywhere in that range.
+    mostly NOT flexion contributes mostly no flexion. Per-bone median
+    |alignment| over the six fixture rows, after R14: 0.665 at the thumb MCP
+    on BOTH hands (the two sides agree exactly now; before R14 they read 0.632
+    and 0.449), 0.871-0.996 on the other 28 joint/side pairs. Against
+    swing-twist about the same axis it differs by at most 1.2 deg in that
+    range. The thumb CMC is the one joint whose corpus rotation runs the other
+    way (median -0.889 / -0.953); see _KNOWN_INVERTED in test_npz_fingers.py.
 
     Both values are NaN for a bone whose source rows are not usable
     rotations; the gate reads that as a rejection.
+
+    *rig* selects whose flexion axes the projection uses; None means the
+    default. It has to be threaded through rather than defaulted internally
+    (review finding, v16 task 5): this function used to call
+    `_finger_flex_refs()` with no argument, so every runtime path silently
+    projected onto the DEFAULT rig's axes however the caller was invoked. The
+    |bend| MAGNITUDE is frame-independent and does not depend on *rig* at all
+    -- only the signed angle does.
     """
     m = np.asarray(mhr_rots, float)
     if m.shape != (127, 3, 3):
         raise ValueError(
             f"mhr_rots has shape {m.shape}, expected (127, 3, 3) -- the "
             f"127-joint MHR kinematic skeleton _MHR_FINGER_ROWS indexes into")
-    refs = _finger_flex_refs()
+    refs = _finger_flex_refs(rig)
     out: dict = {}
     for side in ("left", "right"):
         for digit in _DIGIT_NAMES:
@@ -1050,7 +1062,7 @@ def _digit_of(name: str) -> tuple:
     return side, rest.split("_")[0]
 
 
-def _finger_digits_passing(mhr_rots: np.ndarray) -> set:
+def _finger_digits_passing(mhr_rots: np.ndarray, rig: Rig | None = None) -> set:
     """The `(side, digit)` pairs whose three source bends are usable data.
 
     Rejection is per DIGIT, not per bone: a digit whose middle phalange is
@@ -1062,8 +1074,13 @@ def _finger_digits_passing(mhr_rots: np.ndarray) -> set:
 
     Deliberately NOT a pose-quality judgement: nothing here compares the
     result against keypoints.
+
+    *rig* is threaded to `_finger_bends` for consistency, not because it
+    changes the answer: this reads only the |bend| MAGNITUDE, which is
+    frame-independent. Passing it keeps a non-default rig from paying for the
+    default rig's references, and keeps one rig in play down the whole path.
     """
-    bends = _finger_bends(mhr_rots)
+    bends = _finger_bends(mhr_rots, rig)
     return {(side, digit) for side in ("left", "right") for digit in _DIGIT_NAMES
             if all(np.isfinite(bends[n][1]) and bends[n][1] <= _FINGER_BEND_LIMIT_DEG
                    for n in _digit_bone_names(side, digit))}
@@ -1092,7 +1109,7 @@ def _finger_locals(rig: Rig, mhr_rots: np.ndarray, indices: list) -> dict:
             f"{fixture['rig_version']!r} but this rig is {rig.version!r} -- "
             f"re-run tools_extract_finger_axes.py")
     axes = fixture["axis"]
-    bends = _finger_bends(mhr_rots)
+    bends = _finger_bends(mhr_rots, rig)
     return {i: QuaternionMath.multiply(
                 rig.rest_local_q[i],
                 QuaternionMath.from_axis_angle(axes[rig.name[i]], bends[rig.name[i]][0]))
@@ -1127,7 +1144,7 @@ def solved_indices(rig: Rig, mhr_rots: np.ndarray | None = None) -> list:
     if mhr_rots is None:
         return [i for i in rig.order
                 if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
-    ok = _finger_digits_passing(mhr_rots)
+    ok = _finger_digits_passing(mhr_rots, rig)
     return [i for i in rig.order
             if rig.solve[i] and (rig.name[i] not in _FINGER_PHALANGE_NAMES
                                  or _digit_of(rig.name[i]) in ok)]

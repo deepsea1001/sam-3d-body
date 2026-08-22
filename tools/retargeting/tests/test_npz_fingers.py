@@ -3,7 +3,8 @@
 The first design for this transfer composed MHR's world rotation DELTA onto
 each phalange, exactly as v16 task 4 does for the spine. That is correct only
 while the two rigs' rests nearly agree -- 7.6-31.6 deg for the spine -- and the
-two rests' FINGER directions are 37-75 deg apart (cosine 0.258-0.804). Measured
+two rests' FINGER directions are 3-49 deg apart, median 27 (in each skeleton's
+own anatomical hand frame; 3-161 deg before R14 re-based the finger rest). Measured
 against the rig's own joint contract the delta transfer produced Y-dominant
 middle phalanges and Z-dominant distals where the rig bends about X: it bent
 fingers sideways and twisted them, and rendered as something that does not read
@@ -51,6 +52,11 @@ _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mhr_npz_rows.json"
 ROWS = json.loads(_FIXTURE.read_text())["rows"]
 DEV_ROW = "a6566802a6c9ddd63340ccb4520e0001"
 HAND_POSES = Path("/Users/scotteaton/Dropbox/CODE/poseGoblin/poses/hand_poses.json")
+# v1: a genuinely DIFFERENT rig -- different version string, different finger
+# rest (its right hand was captured curled into a fist, which is what R14
+# removed from v2), finger islands still disconnected at `parent: None`.
+# Its flexion references sit 11.6-139.4 deg away from v2's on all 30 bones.
+_V1_PATH = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v1.json"
 
 RIG = load_rig()
 I = RIG.index_of_name
@@ -169,18 +175,124 @@ def test_full_flexion_reproduces_the_stored_fist_and_zero_reproduces_rest():
 
 
 # --------------------------------------------------------------------------
+# The axes, corroborated by a pose they were NOT measured from
+# --------------------------------------------------------------------------
+
+# The nine joints per side whose flexion axis is a genuine single hinge, so a
+# second, independently authored pose has to rotate them about the SAME axis:
+# the eight interphalangeal joints of the four fingers, plus the thumb IP.
+_SINGLE_HINGE = [f"{stem}_{k}" for stem in ("index_finger", "middle_finger",
+                                            "ring_finger", "pinky_finger")
+                 for k in (2, 3)] + ["thumb_3"]
+
+# The six per side that are NOT single hinges, with the |dot| each actually
+# reaches against Point. The four MCPs abduct as well as flex; the thumb CMC
+# and MCP are the two joints Fist alone genuinely cannot determine -- which is
+# the same thumb_1 that the corpus alignment finds inverted (see _KNOWN_INVERTED).
+# Pinned, not smoothed: if any of these moves, the axis model changed.
+_MULTI_DOF_POINT_DOT = {
+    "thumb_1": 0.0949, "thumb_2": 0.6721, "index_finger_1": 0.6923,
+    "middle_finger_1": 1.0000, "ring_finger_1": 0.9324, "pinky_finger_1": 0.9562,
+}
+
+
+def _preset_axis_and_arc(name, pose_name, presets):
+    """(axis, degrees) of `conj(rest) o preset` for one bone, in the bone's own
+    rest-local frame -- the same construction tools_extract_finger_axes.py uses
+    for Fist. The preset is authored on LEFT bone names and applied to both
+    hands verbatim, so the right hand reads the left entry against its own rest."""
+    side = "left" if name.startswith("left_") else "right"
+    rest = RIG.rest_local_q[I[name]]
+    rest = -rest if rest[0] < 0 else rest
+    want = QM.from_threejs_dict(presets[pose_name][name.replace(side, "left", 1)])
+    want = -want if want[0] < 0 else want
+    rel = QM.multiply(QM.conjugate(QM.normalize(rest)), QM.normalize(want))
+    axis, ang = QM.to_axis_angle(rel if rel[0] >= 0 else -rel)
+    return axis, float(np.degrees(ang))
+
+
+def test_point_and_spread_corroborate_the_axes_measured_from_fist():
+    """Review finding: the axes are derived from Fist ALONE, so every one of
+    them rests on a single chord with nothing to check it against. `Point` and
+    `Spread` are two more hand poses PoseGoblin ships, authored independently of
+    Fist, and they are a real constraint -- a single-hinge joint must rotate
+    about the same axis in all three.
+
+    Measured agreement on the eighteen single-hinge bones (nine per side):
+    Point |1 - |dot|| <= 3.3e-16 -- machine precision, on all eighteen. Spread
+    <= 1.6e-3. The thumb IP (`thumb_3`) is in that set, so two of the thumb's
+    three axes now have independent corroboration.
+
+    The other twelve DISAGREE, and are reported rather than averaged away:
+    the four MCPs abduct as well as flex (|dot| 0.69-1.00), and the thumb CMC
+    and MCP come out at 0.0949 and 0.6721 -- Fist alone does not determine a
+    single axis for them. That is the same weakest-joint finding the transfer
+    already carries, arrived at from a second direction."""
+    presets = {e["name"]: e["pose"] for e in json.loads(HAND_POSES.read_text())}
+    assert {"Fist", "Point", "Spread"} <= set(presets)
+    fist_axis = load_finger_axes()["axis"]
+
+    corroborated = [f"{side}_{nm}" for side in SIDES for nm in _SINGLE_HINGE]
+    assert len(corroborated) == 18
+    for name in corroborated:
+        # (pose, |1-|dot|| bound, arc floor). Spread's arcs are the shorter of
+        # the two -- 3.71 deg at `ring_finger_2` -- and still land on the same
+        # axis to 1.6e-3, which is the point: a short chord is not a vague one.
+        for pose_name, tol, arc_floor in (("Point", 1e-9, 10.0), ("Spread", 1e-2, 3.0)):
+            axis, arc = _preset_axis_and_arc(name, pose_name, presets)
+            assert arc > arc_floor, (name, pose_name, arc)  # the arc determines an axis
+            dot = abs(float(np.dot(axis, fist_axis[name])))
+            assert 1.0 - dot <= tol, (name, pose_name, dot)
+
+    # Positive control: |dot| ~ 1 is a real constraint, not something any pair of
+    # axes satisfies. The twelve multi-DOF joints are measured against the same
+    # Point pose and do NOT reach it -- and their disagreement is pinned.
+    for side in SIDES:
+        for nm, want in _MULTI_DOF_POINT_DOT.items():
+            axis, _arc = _preset_axis_and_arc(f"{side}_{nm}", "Point", presets)
+            dot = abs(float(np.dot(axis, fist_axis[f"{side}_{nm}"])))
+            assert dot == pytest.approx(want, abs=1e-3), (side, nm, dot)
+    assert min(_MULTI_DOF_POINT_DOT.values()) < 0.2      # thumb_1 really is ~orthogonal
+
+
+def test_left_and_right_share_one_measured_axis_after_r14():
+    """R14's own regression guard on the fixture. The rig asset's two hands are
+    now at the same rest, so `conj(rest) o Fist` must give the same axis AND the
+    same arc on both sides. Before R14 the arcs were uniformly 0.6300 of the
+    left's on all fifteen bones -- a constant ratio, the fingerprint of a right
+    hand captured 37% closed.
+
+    The extractor asserts this too and refuses to write; this is the same claim
+    pinned against the committed fixture, so a hand-edited file cannot slip past."""
+    ax = load_finger_axes()
+    for nm in [f"{stem}_{k}" for stem in ("thumb", "index_finger", "middle_finger",
+                                          "ring_finger", "pinky_finger")
+               for k in (1, 2, 3)]:
+        la, ra = ax["axis"][f"left_{nm}"], ax["axis"][f"right_{nm}"]
+        deg = float(np.degrees(np.arccos(min(1.0, abs(float(np.dot(la, ra)))))))
+        assert deg < 0.1, (nm, deg)                      # measured worst 0.0023
+        assert ax["fist_angle_deg"][f"left_{nm}"] == pytest.approx(
+            ax["fist_angle_deg"][f"right_{nm}"], abs=1e-3)   # measured worst 1.4e-4
+    # positive control: the arcs are not all the same number, so "equal" above is
+    # a constraint on the pairing and not on a constant.
+    arcs = [ax["fist_angle_deg"][f"left_{nm}"] for nm in ("thumb_2", "index_finger_2")]
+    assert abs(arcs[0] - arcs[1]) > 50.0, arcs
+
+
+# --------------------------------------------------------------------------
 # MHR side: bends, and the chirality-derived reference axes
 # --------------------------------------------------------------------------
 
-def test_reference_axes_align_with_the_corpus_own_finger_rotations():
-    """The design's positive control. The reference axes come from two sources
-    that know nothing about each other -- PoseGoblin's authored Fist preset and
-    the MHR template skeleton's rest geometry -- so the corpus's ACTUAL finger
-    rotations landing on them is evidence the correspondence is right. Median
-    |alignment| must be high AND the signs must be predominantly positive
-    (MHR's fingers flexing the way the rig calls flexion, not the reverse)."""
-    refs = _finger_flex_refs()
-    aligns = []
+def _per_bone_alignment_medians(refs):
+    """{bone name -> median over the six fixture rows of dot(the corpus's OWN
+    bend axis, *refs*[bone])}. 30 bones, 6 samples each.
+
+    PER BONE, deliberately (review finding). The pooled median over all 180
+    samples cannot see a single mis-signed digit -- 12 of 180 samples do not
+    move a median -- and a mis-signed digit reads downstream as hyperextension,
+    which the range-of-motion test tolerates. Per bone, one inverted digit is
+    three bones at -1 and impossible to miss."""
+    per: dict = {}
     for row_id in ROWS:
         mr = rots(row_id)
         for side in SIDES:
@@ -190,30 +302,74 @@ def test_reference_axes_align_with_the_corpus_own_finger_rotations():
                     row = _MHR_FINGER_ROWS[name]
                     rel = QM.multiply(QM.conjugate(_mhr_delta_q(mr, prev)), _mhr_delta_q(mr, row))
                     axis, _ = QM.to_axis_angle(rel if rel[0] >= 0 else -rel)
-                    aligns.append(float(np.dot(axis, refs[name])))
+                    per.setdefault(name, []).append(float(np.dot(axis, refs[name])))
                     prev = row
-    aligns = np.array(aligns)
-    assert len(aligns) == 180
-    assert np.median(np.abs(aligns)) > 0.90
-    assert np.median(aligns) > 0.90, "MHR flexes the way the rig calls flexion"
-    # positive control: swapping each hand's reference for the other hand's
-    # must destroy the agreement, or the check above is measuring nothing.
-    swapped = []
-    for row_id in ROWS:
-        mr = rots(row_id)
-        for side in SIDES:
-            other = "right" if side == "left" else "left"
-            for d in DIGITS:
-                prev = _MHR_WRIST_ROW[side]
-                for k in (1, 2, 3):
-                    row = _MHR_FINGER_ROWS[bone(side, d, k)]
-                    rel = QM.multiply(QM.conjugate(_mhr_delta_q(mr, prev)), _mhr_delta_q(mr, row))
-                    axis, _ = QM.to_axis_angle(rel if rel[0] >= 0 else -rel)
-                    swapped.append(float(np.dot(axis, refs[bone(other, d, k)])))
-                    prev = row
-    assert np.median(swapped) < 0.0, (
-        "cross-hand references must NOT agree -- if they do, the reference "
-        "construction is not chirality-sensitive and proves nothing")
+    assert set(per) == set(_MHR_FINGER_ROWS) and all(len(v) == 6 for v in per.values())
+    return {n: float(np.median(v)) for n, v in per.items()}
+
+
+# The thumb CMC is the one joint where the corpus's rotation runs OPPOSITE to
+# the rig's declared flexion. Measured medians: left -0.889, right -0.953 --
+# consistent, on both hands, and unchanged by R14 (identical before and after
+# the rest correction), so it is not a chirality or transport error. The
+# mannequin's `thumb_1` maps to MHR's `thumb1`, whose own parent `thumb0` (the
+# CMC) has no mannequin counterpart, so `conj(Delta(wrist)) o Delta(thumb1)`
+# absorbs thumb0's rotation -- largely opposition/abduction, which a single
+# hinge cannot express. Pinned here rather than tolerated: it is NAMED, so a
+# new inversion cannot hide behind it and a future fix must re-pin this list.
+_KNOWN_INVERTED = {"left_thumb_1", "right_thumb_1"}
+
+
+def test_every_bones_reference_axis_agrees_in_sign_with_the_corpus():
+    """The design's positive control, per bone. The reference axes come from two
+    sources that know nothing about each other -- PoseGoblin's authored Fist
+    preset and the MHR template skeleton's rest geometry -- so the corpus's
+    ACTUAL finger rotations landing on them is evidence the correspondence is
+    right."""
+    med = _per_bone_alignment_medians(_finger_flex_refs())
+
+    inverted = {n for n, v in med.items() if v < 0.0}
+    assert inverted == _KNOWN_INVERTED, (
+        f"finger bones whose corpus rotation runs against the rig's flexion "
+        f"axis changed: {sorted(inverted ^ _KNOWN_INVERTED)}")
+
+    agreeing = {n: v for n, v in med.items() if n not in _KNOWN_INVERTED}
+    assert len(agreeing) == 28
+    worst = min(agreeing.items(), key=lambda kv: kv[1])
+    assert worst[1] > 0.60, worst          # measured 0.665 (both thumb_2 bones)
+    # the pinned exception is a real inversion, not a near-zero wobble
+    assert max(med[n] for n in _KNOWN_INVERTED) < -0.70, {n: med[n] for n in _KNOWN_INVERTED}
+
+    # left and right must agree in SIGN on every one of the 15 bone pairs: a
+    # reference transported onto the wrong hand breaks one side, not both.
+    for n in med:
+        if n.startswith("left_"):
+            assert np.sign(med[n]) == np.sign(med[n.replace("left", "right", 1)]), (
+                n, med[n], med[n.replace("left", "right", 1)])
+
+
+def test_the_sign_check_names_a_single_inverted_digit_and_a_swapped_hand():
+    """Two positive controls for the check above (CLAUDE.md rule 1).
+
+    The first is the exact failure mode the review named -- ONE mis-signed
+    digit, which the old pooled median could not see at all. It must be named,
+    and nothing else may be."""
+    refs = _finger_flex_refs()
+
+    flipped = dict(refs)
+    for name in digit_bones("right", "ring"):
+        flipped[name] = -refs[name]
+    got = {n for n, v in _per_bone_alignment_medians(flipped).items() if v < 0.0}
+    assert got == _KNOWN_INVERTED | set(digit_bones("right", "ring")), sorted(got)
+
+    # ...and swapping each hand's references for the other hand's must destroy
+    # the agreement wholesale, or the construction is not chirality-sensitive.
+    swapped = {n: refs[n.replace("left", "right", 1) if n.startswith("left_")
+                       else n.replace("right", "left", 1)] for n in refs}
+    med = _per_bone_alignment_medians(swapped)
+    n_inverted = sum(1 for v in med.values() if v < 0.0)
+    assert n_inverted >= 20, n_inverted     # measured 24 of 30; the six thumb
+                                            # bones survive, the 24 finger bones do not
 
 
 def test_real_bends_are_far_below_the_gate_bound():
@@ -339,17 +495,55 @@ def test_solve_rig_locals_returns_exactly_solved_indices():
 # End to end
 # --------------------------------------------------------------------------
 
-def test_real_row_actually_poses_the_fingers_and_leaves_tips_at_rest():
+def _phalange_movement(row_id):
+    """{phalange name -> degrees its solved local sits off its rest} for one row."""
+    st = rig_state_from_mhr70(kp(row_id), rots(row_id))
+    return {n: quat_deg(QM.from_threejs_dict(st["pose"][n]), RIG.rest_local_q[I[n]])
+            for n in _FINGER_PHALANGE_NAMES}
+
+
+def test_every_phalange_moves_off_rest_on_a_real_row():
+    """PER BONE, not a count (review finding). `len(moved) >= 25` permitted five
+    of thirty phalanges to sit dead at rest and still pass -- and a bone sitting
+    dead at rest is exactly what a mis-transported reference axis produces, since
+    the applied angle is `bend * dot(axis, ref)` and a wrong `ref` drives that
+    dot to zero. A count cannot name the offender; this can."""
     st = rig_state_from_mhr70(kp(DEV_ROW), rots(DEV_ROW))
     assert len(st["pose"]) == 73
-    moved = [n for n in _FINGER_PHALANGE_NAMES
-             if quat_deg(QM.from_threejs_dict(st["pose"][n]), RIG.rest_local_q[I[n]]) > 1.0]
-    assert len(moved) >= 25, f"only {len(moved)} of 30 phalanges moved off rest"
+
+    moved = _phalange_movement(DEV_ROW)
+    assert len(moved) == 30
+    dead = {n: v for n, v in moved.items() if v <= 5.0}
+    assert dead == {}, dead              # measured floor on this row: 8.89 deg
+                                          # (left_thumb_3); the largest is 41.14
+
     for side in SIDES:
         for d in DIGITS:
             tip = f"{side}_thumb_tip" if d == "thumb" else f"{side}_{d}_finger_tip"
             assert_same_quat(QM.from_threejs_dict(st["pose"][tip]),
                              RIG.rest_local_q[I[tip]], f"{tip} vs rest")
+
+
+def test_no_phalange_is_ever_dead_across_the_whole_fixture():
+    """The same check widened to all six rows, with the floor the real data
+    actually supports rather than the one the dev row alone would allow.
+
+    Per-bone MEDIAN over the six rows: 9.96 deg at worst (left_thumb_3).
+    Per-bone-per-ROW minimum: 0.659 deg, at `right_thumb_1` on one row -- small
+    because that joint's rotation is nearly ORTHOGONAL to the rig's flexion axis
+    there (alignment -0.069 on that row), so the projection correctly applies
+    almost none of it. That is the mechanism working, not a dead bone; a bone
+    the transfer never reaches sits at ~1e-9, eight orders of magnitude below."""
+    per_bone: dict = {}
+    for row_id in ROWS:
+        for n, v in _phalange_movement(row_id).items():
+            per_bone.setdefault(n, []).append(v)
+    assert len(per_bone) == 30 and all(len(v) == 6 for v in per_bone.values())
+
+    quiet = {n: float(np.median(v)) for n, v in per_bone.items() if np.median(v) <= 5.0}
+    assert quiet == {}, quiet            # worst measured median 9.96 deg
+    never = {n: min(v) for n, v in per_bone.items() if min(v) <= 0.25}
+    assert never == {}, never            # worst measured single sample 0.659 deg
 
 
 def test_no_rotations_leaves_all_forty_finger_bones_at_rest():
@@ -370,11 +564,21 @@ def test_posed_fingers_stay_within_the_rigs_own_range_of_motion():
     the failure mode of the delta transfer this replaced was fingers thrown far
     outside any pose the rig can reach."""
     ax = load_finger_axes()
+    worst = (-1e9, None)
     for row_id in ROWS:
         st = rig_state_from_mhr70(kp(row_id), rots(row_id))
         for name in _FINGER_PHALANGE_NAMES:
             moved = quat_deg(QM.from_threejs_dict(st["pose"][name]), RIG.rest_local_q[I[name]])
-            assert moved <= ax["fist_angle_deg"][name] + 15.0, (row_id, name, moved)
+            over = moved - ax["fist_angle_deg"][name]
+            if over > worst[0]:
+                worst = (over, (row_id, name, moved))
+            # 10, re-pinned after R14 from the 15 the pre-R14 arcs were given.
+            # Measured worst overshoot 7.14 deg at left_thumb_2 (arc 19.21, moved
+            # 26.36) -- the thumb MCP again, the one joint a single hinge cannot
+            # express. R14 barely moved this: it was 7.19 deg before.
+            assert over <= 10.0, (row_id, name, moved, ax["fist_angle_deg"][name])
+    assert worst[0] > 0.0, worst   # positive control: something DOES exceed its
+                                     # own fist arc, so the bound is a real bound
 
 
 # --------------------------------------------------------------------------
@@ -457,7 +661,53 @@ def test_axes_are_refused_on_a_rig_they_were_not_measured_against():
 
 
 def test_flex_refs_honour_an_explicitly_passed_rig():
-    """The per-version cache must not answer for a rig it was not asked about."""
+    """The per-version cache must not answer for a rig it was not asked about.
+
+    Review finding: this used to compare `_finger_flex_refs()` against
+    `_finger_flex_refs(RIG)` -- where RIG *is* the default rig. It asserted that
+    two identical things were identical and could not fail for the reason it
+    named. It now passes a genuinely different rig (v1: different version
+    string, different finger rest, finger islands still disconnected), whose
+    references really do land somewhere else."""
+    other = load_rig(_V1_PATH)
+    assert other.version != RIG.version                      # genuinely different
+
     a = _finger_flex_refs()
-    b = _finger_flex_refs(RIG)
-    assert set(a) == set(b) and all(np.allclose(a[k], b[k]) for k in a)
+    b = _finger_flex_refs(other)
+    assert set(a) == set(b) == set(_MHR_FINGER_ROWS)
+    angles = sorted(float(np.degrees(np.arccos(np.clip(float(np.dot(a[n], b[n])), -1.0, 1.0))))
+                    for n in a)
+    # measured 11.643 / 107.346 / 139.357 deg (min/median/max); all 30 differ.
+    assert angles[0] > 5.0, angles[:3]
+    # ...and asking again for the default must still give the DEFAULT's answer,
+    # not v1's -- the cache miss must not have overwritten the shared entry.
+    again = _finger_flex_refs()
+    assert all(np.array_equal(a[n], again[n]) for n in a)
+
+
+def test_finger_bends_uses_the_rig_it_is_given():
+    """Latent bug (review finding): `_finger_bends` called `_finger_flex_refs()`
+    with no argument, so the runtime path always projected onto the DEFAULT
+    rig's axes no matter which rig was passed down from `solved_indices` /
+    `_finger_locals`. Nothing could see it while only one rig existed.
+
+    The two halves below are what make this test able to fail for its own
+    reason: the |bend| MAGNITUDE is frame-independent and must NOT move (that
+    is the positive control -- it proves both calls saw the same MHR data),
+    while the SIGNED angle is a projection onto the rig's axes and must."""
+    other = load_rig(_V1_PATH)
+    mr = rots(DEV_ROW)
+    a = _finger_bends(mr)
+    b = _finger_bends(mr, other)
+    assert set(a) == set(b) and len(a) == 30
+
+    for n in a:
+        assert b[n][1] == pytest.approx(a[n][1], abs=1e-9), f"{n} magnitude moved"
+    delta = {n: abs(float(np.degrees(a[n][0] - b[n][0]))) for n in a}
+    # With the bug, every one of these is exactly 0. Measured on the dev row:
+    # 23 of 30 move more than 1 deg (21-26 across the six rows), worst 52.8 deg.
+    assert max(delta.values()) > 20.0, delta
+    moved = [n for n, v in delta.items() if v > 1.0]
+    assert len(moved) >= 20, (
+        f"only {len(moved)} of 30 signed angles changed with a rig whose flexion "
+        f"references sit 11.6-139.4 deg away -- the rig is being ignored")
