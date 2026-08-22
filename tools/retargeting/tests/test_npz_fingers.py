@@ -43,7 +43,7 @@ import pytest
 
 from retargeting.core.math_utils import QuaternionMath as QM
 from retargeting.retargeters.posegoblin_rig import (
-    _FINGER_BEND_LIMIT_DEG, _FINGER_PHALANGE_NAMES, _MHR_FINGER_ROWS,
+    _FINGER_BEND_LIMIT_DEG, _FINGER_PHALANGE_NAMES, _FINGER_REFS, _MHR_FINGER_ROWS,
     _MHR_WRIST_ROW, _finger_bends, _finger_digits_passing, _finger_flex_refs,
     _mhr_delta_q, load_finger_axes, load_mhr_rest, load_rig, rig_state_from_mhr70,
     rig_targets_from_mhr70, solve_rig_locals, solved_indices)
@@ -544,6 +544,49 @@ def test_no_phalange_is_ever_dead_across_the_whole_fixture():
     assert quiet == {}, quiet            # worst measured median 9.96 deg
     never = {n: min(v) for n, v in per_bone.items() if min(v) <= 0.25}
     assert never == {}, never            # worst measured single sample 0.659 deg
+
+
+def test_the_movement_checks_name_the_bone_an_orthogonalised_reference_kills():
+    """Positive control for the two checks above (CLAUDE.md rule 1). `dead ==
+    {}`, `quiet == {}` and `never == {}` have no committed evidence the
+    5.0/0.25 deg floors can ever fire -- a detector broken back to always
+    returning `{}` would pass both vacuously, and read as coverage.
+
+    The perturbation is `left_index_finger_2`'s own reference axis ROTATED 90
+    deg within the plane it shares with world +X, landing perpendicular to
+    where it started -- the shape of "mis-transported" the projection
+    `bend * dot(axis, ref)` is defenceless against. It does not even reach
+    zero: the corpus's own bend axis is not perfectly aligned with the
+    reference it is projected onto (per-bone median |alignment| 0.87-0.996,
+    never 1.0 -- see `_per_bone_alignment_medians`), so a small component
+    survives the near-cancellation. Measured 2.36 deg on the dev row,
+    comfortably under the 5.0 deg floor both checks use.
+
+    Built in memory for this test only -- never a committed fixture on disk.
+    `_FINGER_REFS` is restored in a `finally` so no other test can see it."""
+    name = "left_index_finger_2"
+    ref = _finger_flex_refs()[name]
+    twist_axis = np.cross(ref, np.array([1.0, 0.0, 0.0]))
+    twist_axis = twist_axis / np.linalg.norm(twist_axis)
+    orthogonalised = np.cross(twist_axis, ref)
+    orthogonalised = orthogonalised / np.linalg.norm(orthogonalised)
+    assert abs(np.dot(orthogonalised, ref)) < 1e-9      # genuinely perpendicular
+
+    saved = dict(_FINGER_REFS[RIG.version])
+    _FINGER_REFS[RIG.version] = {**saved, name: orthogonalised}
+    try:
+        dead = {n: v for n, v in _phalange_movement(DEV_ROW).items() if v <= 5.0}
+
+        per_bone: dict = {}
+        for row_id in ROWS:
+            for n, v in _phalange_movement(row_id).items():
+                per_bone.setdefault(n, []).append(v)
+        quiet = {n: float(np.median(v)) for n, v in per_bone.items() if np.median(v) <= 5.0}
+    finally:
+        _FINGER_REFS[RIG.version] = saved
+
+    assert dead == {name: pytest.approx(2.36, abs=0.01)}, dead     # comfortably under the 5.0 deg floor
+    assert quiet == {name: pytest.approx(3.15, abs=0.01)}, quiet   # measured median across the six rows
 
 
 def test_no_rotations_leaves_all_forty_finger_bones_at_rest():
