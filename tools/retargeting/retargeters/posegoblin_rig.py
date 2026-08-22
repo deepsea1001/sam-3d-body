@@ -1044,9 +1044,21 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
     # axis is stripped first. That axis is unobservable from the shoulder
     # POSITION (see _aim_delta), the rig has no clavicle-roll DOF to receive
     # it, and it is what fb42e71 established must not appear in this local.
-    # Measured over all eighteen fixture rows the model carries a median 3.5
-    # deg of it, so this discards noise rather than signal -- pinned by
-    # test_how_much_model_roll_is_discarded, which fails if that grows.
+    #
+    # What that discards is NOT noise, and the size is worth knowing: over all
+    # eighteen fixture rows x two sides the model carries a median 7.20 deg of
+    # roll about this axis, p90 13.19, max 29.07. It is dropped anyway for two
+    # reasons and kept honest by a third:
+    #   - there is nowhere for it to go. The rig has no clavicle-roll degree
+    #     of freedom, and roll in this local is precisely what drove Scott's
+    #     IK into its joint limits (fb42e71).
+    #   - the axis is the MANNEQUIN's long axis, which sits 26.5 deg off MHR's,
+    #     so part of what is measured here as twist is MHR swing our axis reads
+    #     as roll. The figures above are an upper bound on real lost signal,
+    #     not an estimate of it.
+    #   - test_how_much_model_roll_is_discarded pins the median under 12 deg,
+    #     so a future model or re-rig that starts carrying genuinely large
+    #     clavicle roll fails loudly instead of being silently thrown away.
     #
     # Without `mhr_rots` there is nothing to transfer and the aim path stays.
     if mhr_rots is not None and s2 in A:

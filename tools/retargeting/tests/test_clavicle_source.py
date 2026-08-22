@@ -328,9 +328,17 @@ def test_the_transferred_local_still_carries_no_roll():
 
 
 def test_how_much_model_roll_is_discarded():
-    """Report, and bound, what swing-only throws away. If MHR routinely
-    carried large clavicle roll this would be dropping real signal; measured
-    over all eighteen fixture rows it does not."""
+    """Report, and bound, what swing-only throws away.
+
+    Measured over all eighteen fixture rows x two sides: median 7.20 deg, p90
+    13.19, max 29.07. That is NOT noise, and this test does not pretend it is
+    -- it is dropped because the rig has no clavicle-roll degree of freedom to
+    receive it, and because roll in this local is what drove Scott's IK into
+    its limits (fb42e71). The bound below is an alarm, not a blessing: the
+    axis is the MANNEQUIN's long axis, 26.5 deg off MHR's, so these figures
+    are an UPPER bound on real lost signal; if the median ever climbs past 12
+    deg the discard has stopped being defensible and somebody must re-measure
+    rather than re-tune this number."""
     rolls = []
     for rows in (ROWS, NPZ_ROWS):
         for rid in rows:
@@ -345,8 +353,9 @@ def test_how_much_model_roll_is_discarded():
     assert len(rolls) == 2 * (len(ROWS) + len(NPZ_ROWS))      # positive control
     assert rolls.max() > 0.5, "positive control: nothing was being discarded at all"
     assert float(np.median(rolls)) < 12.0, (
-        f"the model carries real clavicle roll (median {np.median(rolls):.1f} deg) -- "
-        f"swing-only is dropping signal, not noise")
+        f"the model's clavicle roll has grown to a median {np.median(rolls):.1f} deg "
+        f"(was 7.20 when swing-only was adopted) -- re-measure whether discarding "
+        f"it is still defensible; do not move this bound to make the run pass")
 
 
 def test_the_fallback_path_is_untouched():

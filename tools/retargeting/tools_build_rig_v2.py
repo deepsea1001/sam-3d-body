@@ -88,6 +88,8 @@ CLAVICLE_DEPENDENT_NAMES = ("right_shoulder", "right_elbow", "right_wrist")
 CLAVICLE_MIRROR_TOL_DEG = 1e-4       # base probe L vs mirrored R (measured: 0.0 exactly)
 CLAVICLE_LEFT_AGREES_TOL_DEG = 1e-3  # base probe left vs v1 left (measured: 4e-5, v1's rounding)
 CLAVICLE_RIGHT_MIN_DEG = 1.0         # v1's right must really be wrong (measured: 6.077)
+LEFT_HAND_SPILL_TOL = 1e-5           # left-hand rest_world_p drift from taking the LEFT
+                                     # clavicle at full precision too (measured: 4.6e-06)
 
 # transform4..8 hang off left_wrist, transform9..13 off right_wrist (binding wiring, from probes)
 GROUP_NAMES = [f"transform{k}" for k in range(4, 14)]
@@ -536,6 +538,30 @@ def main():
         finger_moved.append((float(np.linalg.norm(np.array(b["rest_world_p"]) - was)), b["name"]))
     assert len(finger_moved) == 40
 
+    # R15 spill, bounded rather than assumed absent. Taking the LEFT clavicle
+    # from the base probe too replaces v1's 6-decimal [0.707107, -0.707107, 0,
+    # 0] with the probe's full-precision value -- 1.71e-06 deg, inert as a
+    # rotation, but it flows through the FK above and nudges all twenty
+    # LEFT-hand rest_world_p by 3.2e-06..4.6e-06 rig units. That is v1's own
+    # rounding being paid off, not geometry moving; the same file already
+    # carries 1.9e-05 of chain-drift rounding elsewhere (FK_BODY_SELFCHECK_TOL).
+    # Pinned here so the day it stops being rounding, somebody finds out.
+    # Measured against THIS build with the left clavicle put back to v1's
+    # rounded value -- not against v1's stored finger rest_world_p, which is
+    # the disconnected-island value R14 legitimately moved by 0.2.
+    li_clav = name_to_i_v1["left_clavicle"]
+    ref_bones = [dict(b) for b in out_bones]
+    ref_bones[li_clav] = dict(ref_bones[li_clav],
+                              rest_local_q=v1_doc["bones"][li_clav]["rest_local_q"])
+    ref_fk = _fk_world_positions(ref_bones)
+    left_hand_spill = max(
+        float(np.linalg.norm(np.array(b["rest_world_p"], float) - ref_fk[i]))
+        for i, b in enumerate(out_bones[:74])
+        if b["name"].startswith("left_") and b["name"] in base_finger_q)
+    assert left_hand_spill <= LEFT_HAND_SPILL_TOL, (
+        f"the left hand's rest_world_p moved {left_hand_spill} -- R15 touches the "
+        f"RIGHT clavicle's geometry only; anything above rounding here is a bug")
+
     doc = {
         "version": "posegoblin_rig_v2",
         "provenance": {
@@ -611,7 +637,8 @@ def main():
     print(f"  R15 clavicle rest from base probe: mirror dev {mirror_dev:.2e} deg, "
           f"left agrees with v1 to {dev_l:.2e} deg, right corrected by {dev_r:.3f} deg")
     print("     rest_world_p followed: "
-          + ", ".join(f"{n} {d:.4f}" for d, n in clav_moved))
+          + ", ".join(f"{n} {d:.4f}" for d, n in clav_moved)
+          + f"; left-hand spill {left_hand_spill:.2e} (rounding only)")
     print(f"  R14 rest_world_p recomputed for 40 finger bones; FK reproduces the 34 body "
           f"bones to {body_dev:.2e} ({body_name})")
     print(f"     largest shift {finger_moved[0][0]:.4f} ({finger_moved[0][1]}), "
