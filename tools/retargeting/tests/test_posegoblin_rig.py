@@ -8,24 +8,36 @@ pair of bones legitimately shares the literal name "joint7" (left_heel's and
 right_heel's toe joint). Matching that -- not diverging from it -- is correct,
 so the asset and Rig must survive a duplicate name without collision.
 
-The finger/thumb chains are excluded from the solve (ruling 4): on the live
-rig they're parented under a Group with its own non-identity rotation and a
-0.1 scale, which FK does not model, and modelling it was ruled out of scope
-(not a search input, invisible at display scale). Nothing is deleted from the
+The finger/thumb chains are excluded from the solve in v1 (ruling 4): on the
+live rig they're parented under a Group with its own non-identity rotation
+and a 0.1 scale, which v1's FK does not model. Nothing is deleted from the
 asset -- the hierarchy test below still sees all 74 bones -- but the FK test
 only checks the solved set, and a separate test pins that solved set to
 exactly what's reachable from pelvis, so a future re-rig that reconnects the
-fingers shows up as THAT assertion failing, not as silence."""
+fingers shows up as THAT assertion failing, not as silence.
+
+v16 task 3 makes v2 (which DOES reconnect the fingers, through ten Group
+nodes appended at indices 74..83) the runtime default; v2's own shape and
+FK/solve behavior around those groups is covered by test_rig_v2_runtime.py.
+This file keeps pinning v1's specific asset shape and its all-34-bones-only
+solve/FK behavior -- both genuinely still true today, just no longer what
+`load_rig()` returns without an explicit path -- so the tests that assert
+those shape facts now load v1 explicitly (`load_rig(_V1)`) rather than via
+the (now v2) default."""
 import os, sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from retargeting.retargeters.posegoblin_rig import load_rig, fk_world_positions
 
+_V1 = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v1.json"
+
 
 def test_asset_loads_with_full_hierarchy():
-    rig = load_rig()
+    rig = load_rig(_V1)
     assert len(rig.order) == 74           # nothing is deleted, see module docstring
     assert rig.version == "posegoblin_rig_v1"
     for i in rig.order:                   # parent-first ordering is load-bearing for FK
@@ -40,7 +52,7 @@ def test_solved_set_is_exactly_reachable_from_pelvis_and_is_pinned():
     itself) so a future re-rig that reconnects the fingers -- without anyone
     remembering to update `solve` -- fails this assertion instead of passing
     silently with a stale flag."""
-    rig = load_rig()
+    rig = load_rig(_V1)
     pelvis_idx = rig.index_of_name["pelvis"]
     reachable = set()
     stack = [pelvis_idx]
@@ -65,11 +77,16 @@ def test_solved_set_is_exactly_reachable_from_pelvis_and_is_pinned():
 
 
 def test_fk_of_rest_locals_reproduces_captured_world_positions():
+    """v16 task 3 / ruling 2: fk_world_positions now covers every node in
+    rig.topo_order, not just the solved set (a solved wrist's group child
+    needs a world orientation the moment anything downstream of it is ever
+    computed) -- so this reproduces rest_world_p for ALL 84 v2 nodes,
+    fingers and groups included, a strictly larger claim than the old
+    solved-only check."""
     rig = load_rig()
     world = fk_world_positions(rig, rig.rest_local_q)
-    solved = [i for i in rig.order if rig.solve[i]]
-    assert set(world.keys()) == set(solved)
-    err = {i: float(np.linalg.norm(world[i] - rig.rest_world_p[i])) for i in solved}
+    assert set(world.keys()) == set(rig.topo_order)
+    err = {i: float(np.linalg.norm(world[i] - rig.rest_world_p[i])) for i in rig.topo_order}
     bad = {rig.name[i]: round(e, 4) for i, e in err.items() if e > 1e-3}
     assert not bad, f"FK does not reproduce the captured rest: {bad}"
 
@@ -93,15 +110,19 @@ def test_solving_for_the_rest_itself_returns_the_rest_locals():
     """targets == rest world positions => every D is identity => locals == rest.
     The zero of the solver; if this fails nothing else is interpretable.
 
-    Iterates the SOLVED set only (not rig.order): solve_rig_locals returns
-    locals for the 34 solved bones alone, matching fk_world_orientations/
-    fk_world_positions (module docstring) -- the 40 unsolved finger/thumb
-    bones are Task 3's concern."""
+    Iterates solve_rig_locals's OWN returned keys, not a recomputed "which
+    bones have solve=True" list: under v2 those aren't the same set any
+    more (ruling 3 -- _FINGER_PHALANGE_NAMES keeps the 30 finger phalanges
+    out of solve_rig_locals's output even though the v2 asset flags them
+    solve:True; see test_rig_v2_runtime.py for dedicated coverage of that
+    exclusion). This test's own claim -- "every bone the solver actually
+    solves lands back on rest when the target IS the rest" -- doesn't need
+    to know which bones those are."""
     from retargeting.retargeters.posegoblin_rig import load_rig, solve_rig_locals
     rig = load_rig()
     out = solve_rig_locals(rig, dict(rig.rest_world_p))
-    solved = [i for i in rig.order if rig.solve[i]]
-    worst = max(_qang(out[i], rig.rest_local_q[i]) for i in solved)
+    assert len(out) == 34               # positive control: still the original 34, unchanged
+    worst = max(_qang(out[i], rig.rest_local_q[i]) for i in out)
     assert worst < 0.5, f"worst bone off rest by {worst:.2f} deg"
 
 
@@ -146,9 +167,12 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     raw_targets = rig_targets_from_mhr70(kp)
     # ruling 5: pose is NAME-keyed (PoseGoblin reads state.pose[child.name]);
     # the two "joint7" bones collapse to a single entry, last-one-wins in
-    # rig.order. 73 unique NAMES out of 74 bones -- not set(rig.order),
-    # which is 74 INDICES and is not what the brief's literal text claims.
-    unique_names = set(rig.name.values())
+    # rig.order. 73 unique NAMES out of the 74 actual BONES -- not
+    # set(rig.order) (84 INDICES under v2, including the ten group nodes)
+    # and not set(rig.name.values()) either any more (v16 task 3: that now
+    # also picks up the ten groups' own names, `transform4`..`transform13`,
+    # which are excluded from the emitted pose -- the viewer owns them).
+    unique_names = {rig.name[i] for i in rig.order if not rig.is_group[i]}
     assert len(unique_names) == 73
     assert set(st["pose"]) == unique_names
     q = st["pose"]["pelvis"]
@@ -162,7 +186,11 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     assert q["_x"] == pytest.approx(float(expected_pelvis_q[1]), abs=1e-9)
     assert q["_y"] == pytest.approx(float(expected_pelvis_q[2]), abs=1e-9)
     assert q["_z"] == pytest.approx(float(expected_pelvis_q[3]), abs=1e-9)
-    assert st["rigVersion"] == "posegoblin_rig_v1" and st["retargetVersion"] == 15
+    # rigVersion tracks the ASSET (v16 task 3 flips the default to v2);
+    # retargetVersion tracks the SOLVE algorithm, untouched by that switch
+    # -- the 34 originally-solved bones behave identically on the richer
+    # asset (see test_rig_v2_runtime.py), so it does not bump.
+    assert st["rigVersion"] == "posegoblin_rig_v2" and st["retargetVersion"] == 15
     # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
     # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
     # rejects it), so round-trip through parse_constant and make IT raise.
@@ -264,8 +292,16 @@ def test_solved_directions_land_on_targets_for_a_real_row():
     rig = load_rig()
     li = rig.index_of_name
     targets = rig_targets_from_mhr70(kp)
-    got = fk_world_positions(rig, solve_rig_locals(rig, targets))
-    solved = [i for i in rig.order if rig.solve[i]]
+    local_out = solve_rig_locals(rig, targets)
+    got = fk_world_positions(rig, local_out)
+    # solve_rig_locals's OWN returned keys, not a recomputed "solve==True"
+    # list: under v2 those aren't the same set (ruling 3 excludes the 30
+    # finger phalanges even though the asset flags them solve:True -- see
+    # test_rig_v2_runtime.py for dedicated coverage of that exclusion).
+    # This gate is about bones the solver actually aims; unposed fingers,
+    # sitting at rest while gated against noisy real keypoints, would fail
+    # it for a reason unrelated to what it's checking.
+    solved = list(local_out.keys())
 
     def _ang(a, b):
         return float(np.degrees(np.arccos(np.clip(

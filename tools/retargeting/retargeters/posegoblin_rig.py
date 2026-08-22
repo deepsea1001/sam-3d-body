@@ -18,17 +18,30 @@ other. `index_of_name` resolves the 72 genuinely-unique names to an index and
 deliberately omits ambiguous ones -- looking up "joint7" by name raises
 KeyError rather than silently returning one of the two.
 
-Ten bones (five fingers/thumb x two hands; 40 bones counting descendants) have
-`parent: None` in the capture. On the live rig they are actually parented
-under a Group carrying its own non-identity rotation AND a 0.1 scale -- the
-container-transform contingency this module's tests anticipate -- but
-modelling rotation+scale propagation through FK for them was ruled out of
-scope (finger articulation is not a search input; hand pose is invisible at
-display scale). Their `solve` flag is False, and fk_world_orientations/
-fk_world_positions skip them. Nothing is deleted from the asset -- a future
-re-rig may reconnect them -- but the FK self-consistency test pins the solved
-set to exactly what's reachable from pelvis, so a re-rig that changes this
-shows up as a failing assertion, never as silence.
+Ten finger/thumb chains (40 bones counting the tip) were, in v1, `parent:
+None` orphans -- disconnected from the rig they are actually rendered on.
+v2 (the default since v16 task 3) reconnects them through the ten Group
+nodes they hang off in the live scene (`transform4`..`transform13`,
+appended at indices 74..83): a fixed rotation plus a 0.1 uniform scale
+each, applied to every finger/thumb bone beneath it. FK walks the full
+84-node topology now (`Rig.topo_order`, NOT `Rig.order` -- the groups sit
+at HIGHER indices than their finger children, so a pass over plain index
+order hits an unprocessed parent) and threads that scale through node
+POSITION (`fk_world_positions`; orientation is scale-invariant, so
+`fk_world_orientations` carries no scale term). The 30 finger PHALANGES
+(chain root + two interior joints; the ten tips stay `solve: False`) carry
+`solve: True` in the v2 asset -- their chains are reachable from pelvis
+now -- but MHR-70 supplies no finger ROTATION data, only raw keypoints that
+`rig_targets_from_mhr70` maps onto them like any other bone. Posing them
+from that data with no per-digit quality gate would be a silent, unreviewed
+behavior change, so `solve_rig_locals` deliberately excludes them
+(`_FINGER_PHALANGE_NAMES`) and they stay at their rest locals. A later task
+adds the real finger path (MHR rotations, gated per digit) and lifts that
+exclusion deliberately. Nothing is deleted from the asset, and both
+versions stay loadable (`load_rig(path=...)`) -- the FK self-consistency
+tests pin exactly what's reachable from pelvis and what's actually solved,
+so a future re-rig that changes either shows up as a failing assertion,
+never as silence.
 """
 from collections import Counter
 from dataclasses import dataclass
@@ -38,27 +51,66 @@ import numpy as np
 
 from ..core.math_utils import QuaternionMath
 
-_ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v1.json"
+_ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v2.json"
 
 
 @dataclass(frozen=True)
 class Rig:
     version: str
-    order: list          # parent-first bone INDICES (int), all 74, solved and unsolved
+    order: list           # asset-order bone INDICES (int), ALL nodes. NOT guaranteed
+                          # parent-first under v2 (see topo_order) -- kept as asset
+                          # order because state serialization depends on it (ruling 6)
+    topo_order: list      # parent-first bone INDICES (int), ALL nodes, groups included.
+                          # v2's groups sit at 74..83 while their finger children sit at
+                          # 14..57, so this is the order every FK walk must use instead
+                          # of `order` (ruling 6)
     name: dict            # index -> bone name (str); NOT unique, see module docstring
     parent: dict          # index -> parent index | None
     rest_local_q: dict    # index -> (4,) [w,x,y,z]
     rest_local_p: dict    # index -> (3,)
     rest_world_p: dict    # index -> (3,)
+    scale: np.ndarray     # (N,) float; per-node LOCAL uniform scale. 1.0 everywhere
+                          # except the ten v2 groups, which carry 0.1
+    is_group: np.ndarray  # (N,) bool; True for the ten constant group nodes (74..83).
+                          # solve:False; excluded from the emitted pose -- the viewer
+                          # already owns them as a fixed container transform
     children: dict        # index -> [child indices], asset order
-    solve: dict           # index -> bool; False for the finger/thumb islands
+    solve: dict           # index -> bool; False for the ten finger/thumb TIPS (and, in
+                          # v1, the whole finger/thumb islands)
     index_of_name: dict   # unique name -> index; ambiguous names (e.g. "joint7") omitted
+
+
+def _topological_order(order: list, parent: dict, children: dict) -> list:
+    """Parent-before-child visitation order over every node in *order*
+    (ruling 6): v2's index layout is deliberately non-topological -- the
+    ten group nodes sit at 74..83 while their finger children sit at
+    14..57 -- so a single forward pass over `range(len(order))` raises
+    KeyError on exactly those ten chains the moment a parent lookup lands
+    on an unprocessed group. Pre-order DFS from each root (`parent is
+    None`), visiting children in ascending index order for a deterministic
+    result."""
+    visited: set = set()
+    result: list = []
+
+    def visit(i: int) -> None:
+        if i in visited:
+            return
+        visited.add(i)
+        result.append(i)
+        for c in children[i]:
+            visit(c)
+
+    for i in order:
+        if parent[i] is None:
+            visit(i)
+    return result
 
 
 def load_rig(path: Path = _ASSET) -> Rig:
     d = json.loads(Path(path).read_text())
     bones = d["bones"]
-    order = list(range(len(bones)))  # asset position IS the index; verified parent-first
+    order = list(range(len(bones)))  # asset position IS the index; NOT necessarily
+                                      # parent-first under v2 -- see topo_order
     name = {i: b["name"] for i, b in enumerate(bones)}
     parent = {i: b["parent"] for i, b in enumerate(bones)}
     children: dict = {i: [] for i in order}
@@ -68,10 +120,15 @@ def load_rig(path: Path = _ASSET) -> Rig:
     name_counts = Counter(name.values())
     index_of_name = {b["name"]: i for i, b in enumerate(bones) if name_counts[b["name"]] == 1}
     return Rig(
-        version=d["version"], order=order, name=name, parent=parent,
+        version=d["version"], order=order, topo_order=_topological_order(order, parent, children),
+        name=name, parent=parent,
         rest_local_q={i: np.asarray(b["rest_local_q"], float) for i, b in enumerate(bones)},
         rest_local_p={i: np.asarray(b["rest_local_p"], float) for i, b in enumerate(bones)},
         rest_world_p={i: np.asarray(b["rest_world_p"], float) for i, b in enumerate(bones)},
+        # v1.json predates scale/is_group (every bone implicitly scale 1.0,
+        # not a group); .get(..., default) loads both versions uniformly.
+        scale=np.array([float(b.get("scale", 1.0)) for b in bones], dtype=float),
+        is_group=np.array([bool(b.get("is_group", False)) for b in bones], dtype=bool),
         children=children,
         solve={i: bool(b["solve"]) for i, b in enumerate(bones)},
         index_of_name=index_of_name,
@@ -79,29 +136,61 @@ def load_rig(path: Path = _ASSET) -> Rig:
 
 
 def fk_world_orientations(rig: Rig, local_q: dict) -> dict:
-    """World orientations for the SOLVED set only (see module docstring)."""
+    """World orientations for EVERY node in the rig, solved or not (ruling
+    2) -- not just the SOLVED set this function used to cover. A node
+    absent from *local_q* falls back to its own rest local
+    (`local_q.get(i, rig.rest_local_q[i])`), so every existing caller, which
+    passes a solved-ONLY dict (`solve_rig_locals`'s own `rig.rest_local_q`
+    seed; `rig_state_from_mhr70`'s `{**rig.rest_local_q, **solved}`; the
+    poseforge3d harness's `fk_world_positions(rig, solved)`), keeps working
+    unchanged -- the unsolved remainder just resolves to rest.
+
+    Traversal follows `rig.topo_order`, never `rig.order`: under v2 the ten
+    group nodes sit at indices 74..83 while their finger children sit at
+    14..57, so a single pass over `rig.order` would look up an unprocessed
+    parent (KeyError) for those ten chains the moment a finger bone is
+    reached. Uniform scale never affects orientation, so this function
+    carries no scale term -- see `fk_world_positions` for where the v2
+    groups' 0.1 scale actually enters the computation.
+    """
     W: dict = {}
-    for i in rig.order:
-        if not rig.solve[i]:
-            continue
+    for i in rig.topo_order:
         p = rig.parent[i]
-        q = np.asarray(local_q[i], float)
+        q = np.asarray(local_q.get(i, rig.rest_local_q[i]), float)
         W[i] = q if p is None else QuaternionMath.multiply(W[p], q)
     return W
 
 
 def fk_world_positions(rig: Rig, local_q: dict) -> dict:
-    """World positions for the SOLVED set only (see module docstring)."""
+    """World positions for EVERY node in the rig, solved or not (ruling 2)
+    -- see `fk_world_orientations` for the local_q fallback-to-rest rule
+    and why traversal must follow `rig.topo_order`.
+
+    Scale-aware (v16 task 3): the ten v2 group nodes carry a 0.1 uniform
+    scale that shrinks every rest offset beneath them, so position FK
+    threads a cumulative scale down the chain --
+
+        cum_scale(i) = cum_scale(parent) * rig.scale[i]
+        W_p(i) = W_p(parent) + rotate(W_R(parent), cum_scale(parent) * rest_local_p(i))
+
+    -- rather than the old scale-is-always-1 `P[p] + rotate(Wq[p],
+    rest_local_p[i])`. Uniform scale never affects orientation, so
+    `fk_world_orientations` (source of W_R above) needs no equivalent term
+    -- but dropping this one puts finger tips ten times too far out
+    (verified: left_index_finger_1 sits 0.994 rig units from left_wrist;
+    without the group's 0.1 scale it lands at 9.94).
+    """
     Wq = fk_world_orientations(rig, local_q)
     P: dict = {}
-    for i in rig.order:
-        if not rig.solve[i]:
-            continue
+    cum_scale: dict = {}
+    for i in rig.topo_order:
         p = rig.parent[i]
         if p is None:
             P[i] = rig.rest_local_p[i].copy()
+            cum_scale[i] = float(rig.scale[i])
         else:
-            P[i] = P[p] + QuaternionMath.rotate_vector(Wq[p], rig.rest_local_p[i])
+            P[i] = P[p] + QuaternionMath.rotate_vector(Wq[p], cum_scale[p] * rig.rest_local_p[i])
+            cum_scale[i] = cum_scale[p] * float(rig.scale[i])
     return P
 
 
@@ -483,7 +572,8 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
     # pinky_1) encode pronation/supination, flexion and deviation together.
     # Rest directions come straight from rest_world_p, which was captured
     # from the live scene and therefore already includes the finger groups'
-    # 0.1 scale (FK cannot reproduce those positions; directions are fine).
+    # 0.1 scale (fk_world_positions reproduces these too since v16 task 3 --
+    # rest_world_p is simply the more direct source, already on hand here).
     # Degenerate/missing knuckles: _pair_delta returns None and the wrist
     # keeps the inherit-elbow fallback.
     for side in ("left", "right"):
@@ -517,6 +607,33 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
     return A
 
 
+# Ruling 3 (v16 task 3): the v2 asset flips these 30 finger phalanges (chain
+# root + two interior joints per digit; the ten tips stay solve:False) to
+# solve:True, since their chains are reachable from pelvis now. But MHR-70
+# supplies no finger ROTATION data -- only raw keypoints, which
+# rig_targets_from_mhr70 maps onto them like any other bone -- so left in
+# `solved` below, the generic aim-based branch would silently start posing
+# fingers from noisy, ungated keypoint data purely as a side effect of the
+# asset switch. Excluded here by NAME rather than a structural walk: unlike
+# "joint7" elsewhere in this rig (module docstring), all 30 of these are
+# uniquely named, and solve_rig_locals already resolves everything else by
+# name via rig.index_of_name. A later task adds the real finger path (MHR
+# rotations, gated per digit) and lifts this exclusion deliberately --
+# search for this constant's name when that happens.
+_FINGER_PHALANGE_NAMES = frozenset({
+    "left_thumb_1", "left_thumb_2", "left_thumb_3",
+    "left_index_finger_1", "left_index_finger_2", "left_index_finger_3",
+    "left_middle_finger_1", "left_middle_finger_2", "left_middle_finger_3",
+    "left_ring_finger_1", "left_ring_finger_2", "left_ring_finger_3",
+    "left_pinky_finger_1", "left_pinky_finger_2", "left_pinky_finger_3",
+    "right_thumb_1", "right_thumb_2", "right_thumb_3",
+    "right_index_finger_1", "right_index_finger_2", "right_index_finger_3",
+    "right_middle_finger_1", "right_middle_finger_2", "right_middle_finger_3",
+    "right_ring_finger_1", "right_ring_finger_2", "right_ring_finger_3",
+    "right_pinky_finger_1", "right_pinky_finger_2", "right_pinky_finger_3",
+})
+
+
 def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
     """Solve absolute local quaternions posing the rig onto *targets*.
 
@@ -530,16 +647,28 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
         L(b) = (D(p) * Wr(p))^-1 * D(b) * Wr(b)      (root: D * Wr)
 
     `targets` is keyed by bone INDEX (subset OK; world positions, Y-up).
-    Returns absolute local quaternions keyed by bone INDEX for the SOLVED set
-    only (see module docstring) -- fk_world_orientations/fk_world_positions
-    are themselves solved-set-only, so Wr below has no entries for unsolved
-    bones. `targets` may carry entries for unsolved bones; they are never
-    read, since no solved bone has an unsolved child (the finger/thumb
-    islands are disconnected at their captured parent: None roots). Unsolved
-    bones are Task 3's concern (rest locals, unchanged).
+    Returns absolute local quaternions keyed by bone INDEX for the SOLVED
+    set only: the 34 bones the rig has always solved, unchanged by v16 task
+    3 -- ruling 3 (`_FINGER_PHALANGE_NAMES` above) keeps the 30 finger
+    phalanges out of `solved` below even though the v2 asset flags them
+    solve:True. `fk_world_orientations`/`fk_world_positions` cover every
+    node now (ruling 2), so Wr below DOES have entries for bones this
+    function never solves -- a solved wrist has an unsolved GROUP child
+    under v2 (the finger islands are reconnected there now, not
+    disconnected at a captured `parent: None` root as in v1), and that is
+    fine: this function never looks up Wr, D or L for a group or a finger
+    phalange. `targets` may carry entries for both (MHR-70 supplies raw
+    finger keypoints, and rig_targets_from_mhr70 maps them onto the
+    phalanges like any other bone); they are never read, since neither
+    group nor phalange is ever `n` here, nor a solved bone's direct child
+    (a solved wrist's only children are its five groups, and a group with
+    no target is dropped from `pairs` before it can influence anything).
+    Unsolved bones fall back to their rest locals; that fallback is the
+    caller's job (`rig_state_from_mhr70`), not this function's.
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
-    solved = [i for i in rig.order if rig.solve[i]]
+    solved = [i for i in rig.order
+              if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
     # Anchored bones get exact frame deltas (facing and hinge twist are
     # constraints there); everything else falls through to the generic
     # child-direction solve below. See _anchor_deltas.
@@ -844,15 +973,25 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
     # ruling 7: solve_rig_locals deliberately covers only the solved bones --
     # padding its own output would claim to have solved bones it never
     # touched. Assembly owns the merge: every bone must land in the state, so
-    # the 40 unsolved finger/thumb bones fall back to their REST locals.
+    # the 40 unsolved finger/thumb bones (30 phalanges excluded per ruling 3
+    # / _FINGER_PHALANGE_NAMES, plus the 10 tips, which are solve:False
+    # outright) AND the ten constant group nodes all fall back to their REST
+    # locals -- the pose comprehension below then drops the groups entirely
+    # (the viewer owns them; see there).
     full_by_index = {**rig.rest_local_q, **solved}
 
     # ruling 5: PoseGoblin reads state.pose[child.name], so the emitted pose
     # is NAME-keyed, not index-keyed. The two "joint7" bones collapse to a
-    # single entry -- last-one-wins by iterating rig.order in parent-first
-    # order, matching PoseGoblin's own captureCurrentState/RecallPoseCommand
-    # contract instead of diverging from it.
-    pose = {rig.name[i]: QuaternionMath.to_threejs_dict(full_by_index[i]) for i in rig.order}
+    # single entry -- last-one-wins by iterating rig.order, which keeps the
+    # original 74 bones (indices 0..73) in their v1 parent-first order,
+    # matching PoseGoblin's own captureCurrentState/RecallPoseCommand
+    # contract instead of diverging from it. The ten v2 group nodes
+    # (`transform4`..`transform13`, is_group=True) are excluded here: the
+    # viewer already owns them as a fixed container transform it never
+    # poses, so sending it ten `transform*` entries would be sending
+    # something it never asked for (v16 task 3) -- 73 keys out, same as v1.
+    pose = {rig.name[i]: QuaternionMath.to_threejs_dict(full_by_index[i])
+            for i in rig.order if not rig.is_group[i]}
 
     # scale: subject leg length (meters, pose-invariant) -> rig units
     rig_leg = np.mean([
