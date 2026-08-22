@@ -971,6 +971,10 @@ def _finger_flex_refs(rig: Rig | None = None) -> dict:
             axis_world = QuaternionMath.rotate_vector(Wr[r.index_of_name[name]], axes[name])
             v = mhr_f @ (rig_f.T @ axis_world)
             refs[name] = v / np.linalg.norm(v)
+    # Fail at the source rather than as a KeyError deep inside the per-row
+    # bend loop: the two side filters above must between them cover every row.
+    assert set(refs) == set(_MHR_FINGER_ROWS), (
+        f"flexion references missing for {sorted(set(_MHR_FINGER_ROWS) - set(refs))}")
     _FINGER_REFS[r.version] = refs
     return refs
 
