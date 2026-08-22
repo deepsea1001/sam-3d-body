@@ -103,6 +103,14 @@ def _topological_order(order: list, parent: dict, children: dict) -> list:
     for i in order:
         if parent[i] is None:
             visit(i)
+    # Review finding (v16 task 3): a dangling parent (points at an index
+    # never visited as a root or reached as a child) or a cycle would
+    # silently yield a SHORT order here -- every downstream FK walk would
+    # just quietly cover fewer nodes, caught previously only by a
+    # hardcoded set(range(84)) in one test. Fail at the source instead.
+    assert set(result) == set(order), (
+        f"topological order missed {set(order) - set(result)} -- a "
+        "dangling or cyclic parent pointer left some node(s) unreached")
     return result
 
 
@@ -634,6 +642,26 @@ _FINGER_PHALANGE_NAMES = frozenset({
 })
 
 
+def solved_indices(rig: Rig) -> list:
+    """The bone indices `solve_rig_locals` actually solves, in `rig.order`.
+
+    The SINGLE authoritative source for "solved" (ruling 3): `rig.solve`
+    alone is no longer enough under v2, since the 30 finger phalanges carry
+    solve:True but are excluded from the generic aim-based path
+    (`_FINGER_PHALANGE_NAMES` above). `solve_rig_locals` calls this itself
+    rather than re-deriving the filter inline, and so must every OTHER
+    reader of "which bones will solve_rig_locals return" -- including
+    outside this module. (Review finding, v16 task 3: poseforge3d's
+    validate_rig_retarget.py machine gate read `rig.solve` directly and, as
+    a result, silently started gating the 30 unposed finger phalanges
+    against real keypoint targets the moment v2 shipped -- every row
+    failing. A direct `rig.solve` read is exactly the bug this function
+    exists to make impossible to repeat.)
+    """
+    return [i for i in rig.order
+            if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
+
+
 def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
     """Solve absolute local quaternions posing the rig onto *targets*.
 
@@ -649,16 +677,16 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     `targets` is keyed by bone INDEX (subset OK; world positions, Y-up).
     Returns absolute local quaternions keyed by bone INDEX for the SOLVED
     set only: the 34 bones the rig has always solved, unchanged by v16 task
-    3 -- ruling 3 (`_FINGER_PHALANGE_NAMES` above) keeps the 30 finger
-    phalanges out of `solved` below even though the v2 asset flags them
-    solve:True. `fk_world_orientations`/`fk_world_positions` cover every
-    node now (ruling 2), so Wr below DOES have entries for bones this
-    function never solves -- a solved wrist has an unsolved GROUP child
-    under v2 (the finger islands are reconnected there now, not
-    disconnected at a captured `parent: None` root as in v1), and that is
-    fine: this function never looks up Wr, D or L for a group or a finger
-    phalange. `targets` may carry entries for both (MHR-70 supplies raw
-    finger keypoints, and rig_targets_from_mhr70 maps them onto the
+    3 -- ruling 3 (`solved_indices`/`_FINGER_PHALANGE_NAMES` above) keeps
+    the 30 finger phalanges out of `solved` below even though the v2 asset
+    flags them solve:True. `fk_world_orientations`/`fk_world_positions`
+    cover every node now (ruling 2), so Wr below DOES have entries for
+    bones this function never solves -- a solved wrist has an unsolved
+    GROUP child under v2 (the finger islands are reconnected there now,
+    not disconnected at a captured `parent: None` root as in v1), and that
+    is fine: this function never looks up Wr, D or L for a group or a
+    finger phalange. `targets` may carry entries for both (MHR-70 supplies
+    raw finger keypoints, and rig_targets_from_mhr70 maps them onto the
     phalanges like any other bone); they are never read, since neither
     group nor phalange is ever `n` here, nor a solved bone's direct child
     (a solved wrist's only children are its five groups, and a group with
@@ -667,8 +695,7 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     caller's job (`rig_state_from_mhr70`), not this function's.
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
-    solved = [i for i in rig.order
-              if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
+    solved = solved_indices(rig)
     # Anchored bones get exact frame deltas (facing and hinge twist are
     # constraints there); everything else falls through to the generic
     # child-direction solve below. See _anchor_deltas.

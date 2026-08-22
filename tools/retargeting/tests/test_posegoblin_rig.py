@@ -85,7 +85,12 @@ def test_fk_of_rest_locals_reproduces_captured_world_positions():
     solved-only check."""
     rig = load_rig()
     world = fk_world_positions(rig, rig.rest_local_q)
-    assert set(world.keys()) == set(rig.topo_order)
+    # rig.order, not rig.topo_order: the latter is the very list FK just
+    # iterated, so comparing against it would be tautological (review
+    # finding) -- rig.order is an independently-sourced list (asset order)
+    # that happens to cover the same 84 indices, so this states something
+    # FK's own traversal can't just hand back to itself.
+    assert set(world.keys()) == set(rig.order)
     err = {i: float(np.linalg.norm(world[i] - rig.rest_world_p[i])) for i in rig.topo_order}
     bad = {rig.name[i]: round(e, 4) for i, e in err.items() if e > 1e-3}
     assert not bad, f"FK does not reproduce the captured rest: {bad}"

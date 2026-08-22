@@ -20,6 +20,10 @@ their wrists. This file covers the RUNTIME consequences of that asset shape:
   - The emitted mannequinState pose dict must skip the ten group nodes (the
     viewer already owns them as a fixed container transform) and still
     collapse the two "joint7" bones to one entry, same as v1: 73 keys.
+  - Review finding: the v1 "solved == reachable-from-pelvis" canary in
+    test_posegoblin_rig.py is now pinned to v1 explicitly and so can never
+    exercise v2's own solved-set identity; this file restores that
+    independent flag-vs-walk cross-check against the asset actually in use.
 """
 import json
 from pathlib import Path
@@ -199,3 +203,48 @@ def test_finger_and_thumb_bones_stay_at_rest_after_a_real_solve():
         assert got["_x"] == pytest.approx(float(want[1]), abs=1e-9)
         assert got["_y"] == pytest.approx(float(want[2]), abs=1e-9)
         assert got["_z"] == pytest.approx(float(want[3]), abs=1e-9)
+
+
+def test_v2_solved_set_matches_an_independent_graph_walk_minus_fingers():
+    """Review finding: test_posegoblin_rig.py's
+    test_solved_set_is_exactly_reachable_from_pelvis_and_is_pinned earns its
+    keep by cross-checking rig.solve against an INDEPENDENT graph walk from
+    pelvis -- but it now loads v1 explicitly (v1's finger islands are
+    genuinely disconnected, so flag==reachable there), and nothing does that
+    walk against the asset actually in use. v2's groups make every node
+    reachable from pelvis, so "reachable" alone no longer identifies
+    "solved" -- ruling 3's finger-phalange exclusion is the missing piece,
+    and this test re-derives it independently of the module's own
+    `_FINGER_PHALANGE_NAMES` (by NAME STRUCTURE: contains "_thumb_"/
+    "_finger_", excluding the ten "_tip" bones -- never a reference to the
+    private constant) rather than trusting the same list twice.
+
+    Flag-vs-walk, on the asset actually in use: combine the walk with the
+    solve:True flags and the independently-derived phalange set, then check
+    that against solve_rig_locals's ACTUAL returned keys on a real solve --
+    not against another derived-but-never-exercised set."""
+    rig = load_rig()
+    pelvis_idx = rig.index_of_name["pelvis"]
+    reachable = set()
+    stack = [pelvis_idx]
+    while stack:
+        i = stack.pop()
+        if i in reachable:
+            continue
+        reachable.add(i)
+        stack.extend(rig.children[i])
+    assert reachable == set(range(84)), (   # positive control: nothing orphaned under v2
+        f"expected every v2 node reachable from pelvis, missing "
+        f"{sorted(rig.name[i] for i in set(range(84)) - reachable)}")
+
+    flagged = {i for i in rig.order if rig.solve[i]}
+    finger_phalanges = {i for i in rig.order
+                         if ("_thumb_" in rig.name[i] or "_finger_" in rig.name[i])
+                         and not rig.name[i].endswith("_tip")}
+    assert len(finger_phalanges) == 30                          # positive control
+
+    expected_solved = (reachable & flagged) - finger_phalanges
+
+    actual_solved = set(solve_rig_locals(rig, rig_targets_from_mhr70(_dev_row_kp70())))
+    assert actual_solved == expected_solved
+    assert len(actual_solved) == 34
