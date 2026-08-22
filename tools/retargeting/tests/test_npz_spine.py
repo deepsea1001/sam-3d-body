@@ -340,8 +340,9 @@ _V16_AFFECTED = ("spine_1", "spine_2", "neck", "head",
 
 
 def test_fallback_none_switches_only_the_spine_branch():
-    """`mhr_rots=None` really takes the v15 branch, and the switch reaches
-    exactly the spine and its descendants -- nothing else.
+    """`mhr_rots=None` really takes the v15 branch, and among the bones BOTH
+    branches solve the switch reaches exactly the spine and its descendants
+    -- nothing else.
 
     v15's own behavior is pinned by the 44 pre-existing tests, every one of
     which calls the solver without `mhr_rots` -- so what is left to prove
@@ -352,11 +353,24 @@ def test_fallback_none_switches_only_the_spine_branch():
     descendants (`_V16_AFFECTED` above) must change with it, and a test
     demanding otherwise would be demanding a bug. The exact set is asserted
     rather than sampled, so a future edit that reaches one bone further
-    fails here instead of passing quietly."""
+    fails here instead of passing quietly.
+
+    Until v16 task 5 the two branches also solved the SAME 34 bones, and this
+    test asserted exactly that. They no longer do, by design: `mhr_rots` now
+    drives the ten finger chains as well as the spine, so the v16 set is the
+    v15 34 plus the 30 phalanges of every digit that passes the integrity
+    gate (all ten digits, on this row). That claim is kept here as an exact
+    set DIFFERENCE rather than deleted -- a branch that started solving
+    anything else extra, or stopped solving a v15 bone, still fails here."""
     targets = rig_targets_from_mhr70(_kp(DEV_ROW))
     v15 = solve_rig_locals(RIG, targets)                          # untouched call site
     v16 = solve_rig_locals(RIG, targets, mhr_rots=_rots(DEV_ROW))
-    assert set(v15) == set(v16), "the branch changed WHICH bones are solved"
+    phalanges = {i for i in RIG.order
+                 if ("_thumb_" in RIG.name[i] or "_finger_" in RIG.name[i])
+                 and not RIG.name[i].endswith("_tip")}
+    assert len(phalanges) == 30                                   # positive control
+    assert set(v16) - set(v15) == phalanges, "the branch solved something unexpected"
+    assert set(v15) - set(v16) == set(), "the branch stopped solving a v15 bone"
 
     for name in ("spine_1", "spine_2"):
         moved = _quat_deg(v15[I[name]], v16[I[name]])

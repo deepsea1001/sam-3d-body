@@ -32,16 +32,32 @@ POSITION (`fk_world_positions`; orientation is scale-invariant, so
 (chain root + two interior joints; the ten tips stay `solve: False`) carry
 `solve: True` in the v2 asset -- their chains are reachable from pelvis
 now -- but MHR-70 supplies no finger ROTATION data, only raw keypoints that
-`rig_targets_from_mhr70` maps onto them like any other bone. Posing them
-from that data with no per-digit quality gate would be a silent, unreviewed
-behavior change, so `solve_rig_locals` deliberately excludes them
-(`_FINGER_PHALANGE_NAMES`) and they stay at their rest locals. A later task
-adds the real finger path (MHR rotations, gated per digit) and lifts that
-exclusion deliberately. Nothing is deleted from the asset, and both
-versions stay loadable (`load_rig(path=...)`) -- the FK self-consistency
-tests pin exactly what's reachable from pelvis and what's actually solved,
-so a future re-rig that changes either shows up as a failing assertion,
-never as silence.
+`rig_targets_from_mhr70` maps onto them like any other bone, so they are
+never posed by the generic aim-based path. Nothing is deleted from the
+asset, and both versions stay loadable (`load_rig(path=...)`) -- the FK
+self-consistency tests pin exactly what's reachable from pelvis and what's
+actually solved, so a future re-rig that changes either shows up as a
+failing assertion, never as silence.
+
+Those 30 phalanges ARE posed since v16 task 5, when the caller supplies
+`mhr_rots` -- from the MHR model's own hand rotations, never from
+keypoints. Not by the world-DELTA transfer the spine uses: that is correct
+only while the two rigs' rests nearly agree (7.6-31.6 deg for the spine)
+and their rest FINGER directions are 37-75 deg apart, which made it bend
+fingers sideways and twist them. Instead the joint's BEND MAGNITUDE --
+frame-independent, and so immune to that mismatch -- is transferred as a
+signed angle about the rig's OWN measured flexion axis
+(`bind_poses/mannequin_finger_axes.json`, extracted from PoseGoblin's
+shipped hand presets by `tools_extract_finger_axes.py`; not +X everywhere,
+the thumb disproves that). Its sign comes from an anatomical hand frame
+each skeleton builds from its own landmarks, so chirality is derived rather
+than hardcoded. A per-digit DATA-INTEGRITY gate (`_finger_digits_passing`
+-- non-finite, improper rotation, absurd bend; deliberately NOT a
+pose-quality judgement) drops a digit back to its rest locals when its
+source rotations are unusable, and `solved_indices` answers that gated
+question so "which bones does the solver solve" stays one function's
+answer. Without `mhr_rots` all 40 finger/thumb bones stay at rest exactly
+as in v15.
 
 The spine is posed from the MHR model's OWN joint rotations since v16 task
 4, when the caller supplies them (`mhr_rots`); MHR-70 has no spine
@@ -64,6 +80,8 @@ from ..core.math_utils import QuaternionMath
 
 _ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v2.json"
 _MHR_REST_ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "mhr_skeleton_rest.json"
+_FINGER_AXES_ASSET = (Path(__file__).resolve().parent.parent / "bind_poses"
+                      / "mannequin_finger_axes.json")
 
 
 @dataclass(frozen=True)
@@ -169,19 +187,32 @@ def load_mhr_rest() -> dict:
     multi-gigabyte model. Numpy and json only, therefore, and a
     module-level singleton so a per-row solve does not re-read the file.
 
-    Returns `{"q_wxyz": (127,4) ndarray, "names": [...], "parents": [...]}`.
-    `q_wxyz[j]` is joint j's rotation to MHR MODEL world -- already
-    accumulated down the chain, in the solver's [w,x,y,z] convention (the
-    fixture is authored that way; three.js and the PoseGoblin captures use
-    [x,y,z,w]).
+    Returns `{"q_wxyz": (127,4) ndarray, "names": [...], "parents": [...],
+    "rest_p_cm": (127,3) ndarray}`. `q_wxyz[j]` is joint j's rotation to MHR
+    MODEL world -- already accumulated down the chain, in the solver's
+    [w,x,y,z] convention (the fixture is authored that way; three.js and the
+    PoseGoblin captures use [x,y,z,w]). `rest_p_cm[j]` is that skeleton's
+    rest POSITION, accumulated from the fixture's `template_offsets_cm` with
+    each joint's PARENT's global rest rotation (`p[j] = p[parent] +
+    R_rest[parent] @ offset[j]` -- the convention test_mhr_rest_fixture.py
+    pins against measured geometry). Only the v16 finger transfer reads it,
+    to build MHR's anatomical hand frame.
     """
     global _MHR_REST
     if _MHR_REST is None:
         d = json.loads(_MHR_REST_ASSET.read_text())
+        q = np.asarray(d["rest_global_q_wxyz"], float)
+        parents = list(d["parents"])
+        offsets = np.asarray(d["template_offsets_cm"], float)
+        p = np.zeros_like(offsets)
+        for j, par in enumerate(parents):
+            p[j] = (offsets[j] if par < 0
+                    else p[par] + QuaternionMath.rotate_vector(q[par], offsets[j]))
         _MHR_REST = {
-            "q_wxyz": np.asarray(d["rest_global_q_wxyz"], float),
+            "q_wxyz": q,
             "names": list(d["names"]),
-            "parents": list(d["parents"]),
+            "parents": parents,
+            "rest_p_cm": p,
         }
     return _MHR_REST
 
@@ -756,9 +787,13 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
 # asset switch. Excluded here by NAME rather than a structural walk: unlike
 # "joint7" elsewhere in this rig (module docstring), all 30 of these are
 # uniquely named, and solve_rig_locals already resolves everything else by
-# name via rig.index_of_name. A later task adds the real finger path (MHR
-# rotations, gated per digit) and lifts this exclusion deliberately --
-# search for this constant's name when that happens.
+# name via rig.index_of_name.
+#
+# v16 task 5 lifts that exclusion CONDITIONALLY: these 30 are solved when
+# the caller supplies `mhr_rots` (from the MHR hand rotations, per digit,
+# behind the integrity gate below) and stay excluded when it does not. The
+# exclusion still lives in exactly one place -- `solved_indices` -- so
+# "which bones does the solver solve" remains one function's answer.
 _FINGER_PHALANGE_NAMES = frozenset({
     "left_thumb_1", "left_thumb_2", "left_thumb_3",
     "left_index_finger_1", "left_index_finger_2", "left_index_finger_3",
@@ -773,24 +808,325 @@ _FINGER_PHALANGE_NAMES = frozenset({
 })
 
 
-def solved_indices(rig: Rig) -> list:
+_DIGIT_NAMES = ("thumb", "index", "middle", "ring", "pinky")
+
+# Rows of the 127-joint MHR kinematic skeleton (names from
+# bind_poses/mhr_skeleton_rest.json), NOT MHR-70 keypoint indices. All 30
+# verified by name against the checkpoint's joint_names, and the thumb
+# correspondence two independent ways: mannequin `thumb_1` sits at 0.453 of
+# hand span from the wrist vs MHR `l_thumb1` at 0.505 and `l_thumb0` at
+# 0.219, and the mannequin's decreasing segment pattern matches the chain
+# from `thumb1`. MHR's thumb CMC (`thumb0`) and pinky metacarpal (`pinky0`)
+# have no mannequin counterpart; their motion rides inside the `_1` joint,
+# whose bend is measured against the WRIST rather than against MHR's own
+# parent -- which is also the mannequin's topology (a phalange `_1` hangs
+# off its group, and the group off the wrist).
+_MHR_WRIST_ROW = {"left": 78, "right": 42}
+_MHR_FINGER_ROWS = {
+    "left_thumb_1": 97, "left_thumb_2": 98, "left_thumb_3": 99,
+    "left_index_finger_1": 92, "left_index_finger_2": 93, "left_index_finger_3": 94,
+    "left_middle_finger_1": 88, "left_middle_finger_2": 89, "left_middle_finger_3": 90,
+    "left_ring_finger_1": 84, "left_ring_finger_2": 85, "left_ring_finger_3": 86,
+    "left_pinky_finger_1": 80, "left_pinky_finger_2": 81, "left_pinky_finger_3": 82,
+    "right_thumb_1": 61, "right_thumb_2": 62, "right_thumb_3": 63,
+    "right_index_finger_1": 56, "right_index_finger_2": 57, "right_index_finger_3": 58,
+    "right_middle_finger_1": 52, "right_middle_finger_2": 53, "right_middle_finger_3": 54,
+    "right_ring_finger_1": 48, "right_ring_finger_2": 49, "right_ring_finger_3": 50,
+    "right_pinky_finger_1": 44, "right_pinky_finger_2": 45, "right_pinky_finger_3": 46,
+}
+
+# Data-integrity gate (ruling R12, as revised). Its ONLY job is to stop
+# garbage rotations reaching the rig; it deliberately does not judge pose
+# quality. The brief's original per-digit kp70 cosine gate was measured and
+# discarded: it dropped 31 of 60 digits, because the cross-rig rest-geometry
+# ceiling per digit is 0.258-0.804 (median 0.614) -- that cosine mostly
+# measures rest mismatch, so a floor on it drops digits roughly independently
+# of whether the transfer is right.
+#
+# _ROT_ATOL: the corpus stores joint_global_rots float32, so a genuine row's
+# worst |R^T R - I| over the six fixture rows is 3.8e-7 and worst |det - 1|
+# 4.0e-7. 1e-4 leaves that a ~250x margin while still rejecting anything
+# meaningfully non-orthonormal (a 1.5x-scaled row lands at 1.25).
+#
+# _FINGER_BEND_LIMIT_DEG: bends beyond this are not a hand. Calibrated
+# against measured range of motion, not guessed -- the largest full-fist arc
+# measured anywhere on this rig is 108.0 deg (Relaxed->Fist; 100.4 deg from
+# the asset's own rest, mannequin_finger_axes.json), and the largest
+# per-joint bend anywhere in the six fixture rows is 51.6 deg. 135 is 1.25x
+# the former and 2.6x the latter, so it cannot bite real data: measured
+# headroom over the whole fixture is 83.4 deg.
+#
+# It is a bound on GARBAGE, and its power is worth knowing rather than
+# assuming. A uniformly random rotation exceeds 135 deg 47.5% of the time,
+# so a 3-joint digit of random rotations is rejected 86% of the time, and a
+# whole 5-digit hand of them 54% of the time (measured over 200 seeds). The
+# sabotage control that exercises it is therefore a FIXED-SEED test, not a
+# proof -- and it is backed by three deterministic per-reason controls that
+# fire with probability 1. See test_npz_fingers.py.
+_ROT_ATOL = 1e-4
+_FINGER_BEND_LIMIT_DEG = 135.0
+
+_FINGER_AXES: dict | None = None
+_FINGER_REFS: dict = {}          # rig version -> per-bone MHR-frame flexion axes
+
+
+def load_finger_axes() -> dict:
+    """The rig's OWN per-bone finger flexion axes, parsed once and cached.
+
+    `bind_poses/mannequin_finger_axes.json` (v16 task 5) is a committed
+    fixture extracted offline by `tools_extract_finger_axes.py` from
+    PoseGoblin's shipped hand-pose presets -- a sibling repo, deliberately
+    not a runtime dependency.
+
+    Returns `{"axis": {bone name: (3,) unit ndarray}, "fist_angle_deg":
+    {bone name: float}}`, 30 bones. `axis` is in the bone's OWN REST-LOCAL
+    frame, so that
+
+        posed_local = rest_local_q o quat(axis, theta)      [w,x,y,z]
+
+    is the rig's rest at theta = 0 and PoseGoblin's stored Fist preset at
+    theta = fist_angle_deg -- exactly, on both hands, which is what makes
+    Fist usable as ground truth for this transfer.
+
+    The axes are MEASURED, never assumed. `+X` is right for the four
+    fingers' middle and distal phalanges on both hands and wrong for the
+    thumb, whose three joints come out mixed-XY, mixed-XZ and pure -Z.
+    """
+    global _FINGER_AXES
+    if _FINGER_AXES is None:
+        d = json.loads(_FINGER_AXES_ASSET.read_text())
+        _FINGER_AXES = {
+            "axis": {k: np.asarray(v["axis"], float) for k, v in d["bones"].items()},
+            "fist_angle_deg": {k: float(v["fist_angle_deg"]) for k, v in d["bones"].items()},
+            "rig_version": str(d["provenance"]["rig_version"]),
+        }
+    return _FINGER_AXES
+
+
+def _hand_frame(wrist, middle1, index1, pinky1) -> np.ndarray:
+    """A right-handed anatomical frame for one hand, columns [along, across,
+    a x b], built from four landmarks the MHR skeleton and the mannequin
+    both have.
+
+    Built by the SAME formula on both skeletons, which is what makes the
+    hands' chirality derived rather than hardcoded: the frame is always
+    right-handed, so a LEFT hand's flexion axis comes out along +across and
+    a RIGHT hand's along -across, all by itself.
+    """
+    a = np.asarray(middle1, float) - np.asarray(wrist, float)
+    a = a / np.linalg.norm(a)
+    b = np.asarray(pinky1, float) - np.asarray(index1, float)
+    b = b - float(np.dot(b, a)) * a
+    b = b / np.linalg.norm(b)
+    return np.column_stack([a, b, np.cross(a, b)])
+
+
+def _finger_flex_refs(rig: Rig | None = None) -> dict:
+    """Per bone, the flexion axis carried across to the MHR REST world frame.
+
+    The rig knows which way each of its own joints bends (`load_finger_axes`,
+    measured from PoseGoblin's Fist preset). MHR supplies a bend but no
+    opinion about which direction counts as flexion. This transports the
+    rig's answer onto MHR's skeleton by expressing it in the anatomical hand
+    frame each skeleton builds from its own wrist/middle_1/index_1/pinky_1
+    (`_hand_frame`) and re-expanding it in the other's -- per SIDE, so the
+    two hands' opposite chirality is carried, not assumed.
+
+    Why per BONE rather than one knuckle-line normal for the whole hand: the
+    four fingers' axes really are the knuckle line (|component| 0.94-0.999
+    along it) but the thumb's are not -- thumb_1 comes out along the hand and
+    thumb_3 out of the palm plane -- so a single normal would give the thumb
+    a meaningless sign.
+
+    The MHR-frame result is the right frame to compare against: the relative
+    rotation `conj(Delta(parent)) o Delta(row)` equals the joint's own local
+    delta conjugated into its REST parent's world frame, so its axis lives in
+    MHR rest world.
+
+    Cached per rig VERSION, so passing a non-default *rig* is honoured rather
+    than answered from the default rig's cache. `_finger_locals` additionally
+    refuses to apply the axes to a rig they were not measured against.
+    """
+    r = load_rig() if rig is None else rig
+    if r.version in _FINGER_REFS:
+        return _FINGER_REFS[r.version]
+    axes = load_finger_axes()["axis"]
+    Wr = fk_world_orientations(r, r.rest_local_q)
+    mhr_p = load_mhr_rest()["rest_p_cm"]
+    mhr_names = load_mhr_rest()["names"]
+    mhr_i = {n: j for j, n in enumerate(mhr_names)}
+    refs: dict = {}
+    for side, pre in (("left", "l_"), ("right", "r_")):
+        rig_f = _hand_frame(r.rest_world_p[r.index_of_name[f"{side}_wrist"]],
+                            r.rest_world_p[r.index_of_name[f"{side}_middle_finger_1"]],
+                            r.rest_world_p[r.index_of_name[f"{side}_index_finger_1"]],
+                            r.rest_world_p[r.index_of_name[f"{side}_pinky_finger_1"]])
+        mhr_f = _hand_frame(mhr_p[mhr_i[pre + "wrist"]], mhr_p[mhr_i[pre + "middle1"]],
+                            mhr_p[mhr_i[pre + "index1"]], mhr_p[mhr_i[pre + "pinky1"]])
+        for name in _MHR_FINGER_ROWS:
+            if not name.startswith(side + "_"):
+                continue
+            # bone-local axis -> rig world (at rest) -> hand-frame coefficients
+            # -> MHR's hand frame -> MHR rest world.
+            axis_world = QuaternionMath.rotate_vector(Wr[r.index_of_name[name]], axes[name])
+            v = mhr_f @ (rig_f.T @ axis_world)
+            refs[name] = v / np.linalg.norm(v)
+    _FINGER_REFS[r.version] = refs
+    return refs
+
+
+def _is_proper_rotation(m) -> bool:
+    """Finite, orthonormal to _ROT_ATOL, determinant +1. The data-integrity
+    half of the finger gate -- see _ROT_ATOL above for where the tolerance
+    comes from."""
+    m = np.asarray(m, float)
+    if m.shape != (3, 3) or not np.all(np.isfinite(m)):
+        return False
+    return (bool(np.allclose(m.T @ m, np.eye(3), atol=_ROT_ATOL))
+            and abs(float(np.linalg.det(m)) - 1.0) <= _ROT_ATOL)
+
+
+def _finger_bends(mhr_rots: np.ndarray) -> dict:
+    """Per phalange, `(signed flexion angle in RADIANS, |bend| in DEGREES)`.
+
+    The bend is `conj(Delta(parent)) o Delta(row)` -- the joint's rotation
+    beyond its own rest, with the parent being the MHR WRIST for a `_1` and
+    the previous phalange otherwise. Its MAGNITUDE is a frame-independent
+    scalar and therefore immune to the rest-geometry mismatch (the two rigs'
+    rest finger directions are 37-75 deg apart) that made a world-DELTA
+    transfer bend fingers sideways.
+
+    The signed angle is that rotation projected onto the rig's own flexion
+    axis for the bone (`_finger_flex_refs`): `angle * dot(axis, ref)`. The
+    projection, rather than magnitude-times-sign, so a rotation that is
+    mostly NOT flexion contributes mostly no flexion -- it matters only for
+    the thumb MCP, whose |alignment| runs 0.45-0.63 while all 28 other
+    joint/side pairs sit at 0.87-0.997 (median 0.979 over the six fixture
+    rows). Against swing-twist about the same axis it differs by at most
+    1.2 deg anywhere in that range.
+
+    Both values are NaN for a bone whose source rows are not usable
+    rotations; the gate reads that as a rejection.
+    """
+    m = np.asarray(mhr_rots, float)
+    if m.shape != (127, 3, 3):
+        raise ValueError(
+            f"mhr_rots has shape {m.shape}, expected (127, 3, 3) -- the "
+            f"127-joint MHR kinematic skeleton _MHR_FINGER_ROWS indexes into")
+    refs = _finger_flex_refs()
+    out: dict = {}
+    for side in ("left", "right"):
+        for digit in _DIGIT_NAMES:
+            prev = _MHR_WRIST_ROW[side]
+            for name in _digit_bone_names(side, digit):
+                row = _MHR_FINGER_ROWS[name]
+                if not (_is_proper_rotation(m[prev]) and _is_proper_rotation(m[row])):
+                    out[name] = (float("nan"), float("nan"))
+                else:
+                    rel = QuaternionMath.multiply(
+                        QuaternionMath.conjugate(_mhr_delta_q(m, prev)), _mhr_delta_q(m, row))
+                    if rel[0] < 0.0:              # shortest arc, so `ang` is <= 180 deg
+                        rel = -rel
+                    axis, ang = QuaternionMath.to_axis_angle(rel)
+                    out[name] = (float(ang * np.dot(axis, refs[name])), float(np.degrees(ang)))
+                prev = row
+    return out
+
+
+def _digit_bone_names(side: str, digit: str) -> list:
+    """The three mannequin phalange names of one digit, root outwards. The
+    thumb is `{side}_thumb_{k}`; the four fingers `{side}_{digit}_finger_{k}`."""
+    stem = "thumb" if digit == "thumb" else f"{digit}_finger"
+    return [f"{side}_{stem}_{k}" for k in (1, 2, 3)]
+
+
+def _digit_of(name: str) -> tuple:
+    """`"right_index_finger_2"` -> `("right", "index")`."""
+    side, rest = name.split("_", 1)
+    return side, rest.split("_")[0]
+
+
+def _finger_digits_passing(mhr_rots: np.ndarray) -> set:
+    """The `(side, digit)` pairs whose three source bends are usable data.
+
+    Rejection is per DIGIT, not per bone: a digit whose middle phalange is
+    garbage cannot be half-posed, and its three bones fall back to their
+    rest locals through the ordinary unsolved-bone path. Rejects when any of
+    the digit's three bends is non-finite (a non-finite or improper source
+    rotation, the wrist row included -- it is the `_1` joint's parent) or
+    beyond `_FINGER_BEND_LIMIT_DEG`.
+
+    Deliberately NOT a pose-quality judgement: nothing here compares the
+    result against keypoints.
+    """
+    bends = _finger_bends(mhr_rots)
+    return {(side, digit) for side in ("left", "right") for digit in _DIGIT_NAMES
+            if all(np.isfinite(bends[n][1]) and bends[n][1] <= _FINGER_BEND_LIMIT_DEG
+                   for n in _digit_bone_names(side, digit))}
+
+
+def _finger_locals(rig: Rig, mhr_rots: np.ndarray, indices: list) -> dict:
+    """Absolute local quaternions for the phalange *indices*, from MHR's bends.
+
+        L(b) = rest_local(b) o quat(rig axis(b), signed MHR bend(b))
+
+    *indices* comes from `solved_indices`, so this never has to re-decide
+    which digits survived the gate.
+
+    The hand as a whole still rides on the solved WRIST -- only the fingers'
+    own bending comes from here. Adduction/abduction (PoseGoblin's "Spread")
+    is out of scope: one axis per joint, and the measured off-axis component
+    at the knuckles is small.
+    """
+    fixture = load_finger_axes()
+    # The axes were measured against ONE rig asset's rest. Applying them to a
+    # different one would silently produce a wrong hand -- a re-rig must fail
+    # here, loudly, and be answered by re-running tools_extract_finger_axes.py.
+    if fixture["rig_version"] != rig.version:
+        raise ValueError(
+            f"mannequin_finger_axes.json was extracted against "
+            f"{fixture['rig_version']!r} but this rig is {rig.version!r} -- "
+            f"re-run tools_extract_finger_axes.py")
+    axes = fixture["axis"]
+    bends = _finger_bends(mhr_rots)
+    return {i: QuaternionMath.multiply(
+                rig.rest_local_q[i],
+                QuaternionMath.from_axis_angle(axes[rig.name[i]], bends[rig.name[i]][0]))
+            for i in indices}
+
+
+def solved_indices(rig: Rig, mhr_rots: np.ndarray | None = None) -> list:
     """The bone indices `solve_rig_locals` actually solves, in `rig.order`.
 
     The SINGLE authoritative source for "solved" (ruling 3): `rig.solve`
-    alone is no longer enough under v2, since the 30 finger phalanges carry
-    solve:True but are excluded from the generic aim-based path
-    (`_FINGER_PHALANGE_NAMES` above). `solve_rig_locals` calls this itself
-    rather than re-deriving the filter inline, and so must every OTHER
-    reader of "which bones will solve_rig_locals return" -- including
-    outside this module. (Review finding, v16 task 3: poseforge3d's
-    validate_rig_retarget.py machine gate read `rig.solve` directly and, as
-    a result, silently started gating the 30 unposed finger phalanges
-    against real keypoint targets the moment v2 shipped -- every row
-    failing. A direct `rig.solve` read is exactly the bug this function
-    exists to make impossible to repeat.)
+    alone is not enough under v2, since the 30 finger phalanges carry
+    solve:True but are posed only from MHR hand ROTATIONS, per digit, behind
+    the integrity gate -- not from the generic aim-based path.
+    `solve_rig_locals` calls this itself rather than re-deriving the filter
+    inline, and so must every OTHER reader of "which bones will
+    solve_rig_locals return" -- including outside this module. (Review
+    finding, v16 task 3: poseforge3d's validate_rig_retarget.py machine gate
+    read `rig.solve` directly and, as a result, silently started gating the
+    30 unposed finger phalanges against real keypoint targets the moment v2
+    shipped -- every row failing. A direct `rig.solve` read is exactly the
+    bug this function exists to make impossible to repeat.)
+
+    *mhr_rots* is optional with a None default so existing callers that pass
+    only *rig* -- the poseforge3d harness does today -- keep working and keep
+    getting exactly the v15 34. With rotations present the answer grows to
+    those 34 plus the phalanges of every digit that passes
+    `_finger_digits_passing`: up to 64, fewer when a digit's source rotations
+    are unusable. Answering the gated question HERE, rather than letting
+    `solve_rig_locals` quietly return less than this function promised, is
+    what keeps the two from drifting apart.
     """
+    if mhr_rots is None:
+        return [i for i in rig.order
+                if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
+    ok = _finger_digits_passing(mhr_rots)
     return [i for i in rig.order
-            if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
+            if rig.solve[i] and (rig.name[i] not in _FINGER_PHALANGE_NAMES
+                                 or _digit_of(rig.name[i]) in ok)]
 
 
 def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
@@ -808,10 +1144,11 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
 
     `targets` is keyed by bone INDEX (subset OK; world positions, Y-up).
     Returns absolute local quaternions keyed by bone INDEX for the SOLVED
-    set only: the 34 bones the rig has always solved, unchanged by v16 task
-    3 -- ruling 3 (`solved_indices`/`_FINGER_PHALANGE_NAMES` above) keeps
-    the 30 finger phalanges out of `solved` below even though the v2 asset
-    flags them solve:True. `fk_world_orientations`/`fk_world_positions`
+    set only -- exactly `solved_indices(rig, mhr_rots)`, never a bone more
+    or fewer. Without *mhr_rots* that is the 34 bones the rig has always
+    solved; with it, those 34 plus the phalanges of the digits that pass the
+    integrity gate, which come from `_finger_locals` and never from the
+    aim-based path below. `fk_world_orientations`/`fk_world_positions`
     cover every node now (ruling 2), so Wr below DOES have entries for
     bones this function never solves -- a solved wrist has an unsolved
     GROUP child under v2 (the finger islands are reconnected there now,
@@ -828,18 +1165,27 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
 
     *mhr_rots*, when given, is this row's (127,3,3) `joint_global_rots`
     (`mhr_rots_from_npz`); it poses the spine from the model's own
-    rotations instead of the v15 construction. Optional with a None default
-    so existing call sites -- the poseforge3d harness and bridge -- keep
+    rotations instead of the v15 construction, and the ten finger chains
+    from the model's own hand rotations. Optional with a None default so
+    existing call sites -- the poseforge3d harness and bridge -- keep
     working untouched, and so rows whose blob is missing still solve.
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
-    solved = solved_indices(rig)
+    solved = solved_indices(rig, mhr_rots)
+    # The phalanges are posed from MHR joint ANGLES about the rig's own
+    # measured axes, not by aiming bones at keypoints: `aim` is the rest of
+    # the solved set, and is what the delta machinery below covers. Splitting
+    # here rather than filtering later keeps every `D[p]` lookup in that loop
+    # on a bone the loop itself solved -- a phalange's parent is a GROUP,
+    # which has no delta at all.
+    fingers = [n for n in solved if rig.name[n] in _FINGER_PHALANGE_NAMES]
+    aim = [n for n in solved if rig.name[n] not in _FINGER_PHALANGE_NAMES]
     # Anchored bones get exact frame deltas (facing and hinge twist are
     # constraints there); everything else falls through to the generic
     # child-direction solve below. See _anchor_deltas.
     anchors = _anchor_deltas(rig, targets, Wr, mhr_rots)
     D: dict = {}
-    for n in solved:
+    for n in aim:
         if n in anchors:
             D[n] = anchors[n]
             continue
@@ -867,7 +1213,7 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
             D[n] = D[p] if p is not None else QuaternionMath.identity()
 
     L: dict = {}
-    for n in solved:
+    for n in aim:
         p = rig.parent[n]
         wb = QuaternionMath.multiply(D[n], Wr[n])
         if p is None:
@@ -875,6 +1221,8 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
         else:
             wp = QuaternionMath.multiply(D[p], Wr[p])
             L[n] = QuaternionMath.multiply(QuaternionMath.conjugate(wp), wb)
+    if fingers:
+        L.update(_finger_locals(rig, mhr_rots, fingers))
     return L
 
 
