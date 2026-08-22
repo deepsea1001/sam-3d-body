@@ -4,8 +4,9 @@
 Group nodes they actually hang off in the live three.js scene
 (`transform4`..`transform13`, each a fixed rotation + 0.1 uniform scale).
 
-No torch: pure numpy/json, reading v1 plus both rig probes
-(bind_poses/capture-rigprobe-09.json, capture-rigrestprobe-10.json).
+No torch: pure numpy/json, reading v1, both rig probes
+(bind_poses/capture-rigprobe-09.json, capture-rigrestprobe-10.json) and the
+base-pose probe (capture-rigbase2-11.json -- see R14 below).
 
 Quaternion conventions (do not mix these up -- see the same note in
 tests/test_rig_v2_asset.py):
@@ -13,24 +14,42 @@ tests/test_rig_v2_asset.py):
     [w,x,y,z] -- fed straight into this repo's QuaternionMath.
   - the PROBES (everything under `nodes[].quat`) are raw three.js dumps,
     [x,y,z,w].
-v1 bones are copied verbatim (already [w,x,y,z], untouched). The ten new
-groups' `rest_local_q` is read from a probe in [x,y,z,w] and converted to
-[w,x,y,z] before it is written to the asset.
+The 34 BODY bones are copied verbatim from v1 (already [w,x,y,z],
+untouched). The 40 finger/thumb bones' `rest_local_q` and the ten new
+groups' come from a probe in [x,y,z,w] and are converted to [w,x,y,z]
+before they are written to the asset.
 
-Both probes are POSED STATES, not rest poses -- never read rest geometry off
-their world matrices. They are used only to (a) learn topology (which group
-each `_1` bone hangs from), (b) read the ten groups' constant local
-transforms, and (c) validate, by FK-reproducing each probe's OWN locals, that
-the topology + group constants this script wrote are actually correct (the
-gate at the bottom of main()).
+capture-rigprobe-09/-rigrestprobe-10 are POSED STATES, not rest poses --
+never read rest geometry off their world matrices. They are used only to
+(a) learn topology (which group each `_1` bone hangs from), (b) read the ten
+groups' constant local transforms, and (c) validate, by FK-reproducing each
+probe's OWN locals, that the topology + group constants this script wrote
+are actually correct (the gate at the bottom of main()).
 
-The 40 finger bones' `rest_world_p` is v1's verbatim value -- already true
-world geometry (e.g. left_index_finger_1 sits 0.99 units from left_wrist,
-real hand scale, not island-local coordinates) -- and is NOT recomputed.
-Only the ten new groups need a `rest_world_p`; each group's local position
-reads as ~0 (three.js float noise on what is conceptually an identity
-offset), so it equals its wrist's rest_world_p -- computed via FK from v1
-rest locals and self-checked against the wrist's own stored value below.
+**R14 -- the finger rest comes from the base-pose probe, not from v1.**
+v1's finger rest descends from `capture-rigrest-02.json`, which was captured
+with the RIGHT hand curled ~34 deg into a fist (mean 33.87 deg / max 44.72
+deg from the rig's true base pose, on all 15 phalanges; the left hand is
+5.72 / 7.56). That curl has sat in the asset as "rest" ever since. It did
+not matter while nothing posed the fingers; v16 task 5 applies
+`rest_local o R(axis, angle)`, so a posed rest over-curls every right hand
+by exactly that amount. `capture-rigbase2-11.json` is the rig reset to its
+true base pose (2026-08-22), where the two hands are the SAME local
+quaternion on all 20 bones per side to 1.79e-4 deg -- PoseGoblin authors a
+hand pose as one set of absolute local quaternions applied to both hands
+verbatim, so symmetric-means-identical is the convention, not an assumption.
+Only the 40 finger/thumb bones are re-based; the 34 body bones keep v1's
+values, which remain the asset of record for them.
+
+The 40 finger bones' `rest_world_p` is therefore RECOMPUTED, by the same
+scale-aware FK the ten groups use (`_fk_world_positions`), since their world
+geometry moves with the corrected locals. The `_1` bones do not move (their
+world position depends on the wrist chain and their own rest_local_p, not on
+their own rotation); `_2`/`_3`/`_tip` do. Only the ten new groups otherwise
+need a `rest_world_p`; each group's local position reads as ~0 (three.js
+float noise on what is conceptually an identity offset), so it equals its
+wrist's rest_world_p -- computed via FK from v1 rest locals and self-checked
+against the wrist's own stored value below.
 """
 import json
 from pathlib import Path
@@ -41,9 +60,22 @@ BP = Path(__file__).resolve().parent / "bind_poses"
 V1 = BP / "posegoblin_rig_v1.json"
 V2 = BP / "posegoblin_rig_v2.json"
 PROBE_PATHS = [BP / "capture-rigprobe-09.json", BP / "capture-rigrestprobe-10.json"]
+# R14: the rig reset to its TRUE base pose. Source of the 40 finger/thumb
+# bones' rest_local_q -- and of nothing else. Its BODY is at whatever pose the
+# live app was showing (right_shoulder alone reads 105.9 deg from v1's rest),
+# so reading anything but the hands off it would be wrong.
+BASE_PROBE_PATH = BP / "capture-rigbase2-11.json"
 
 # transform4..8 hang off left_wrist, transform9..13 off right_wrist (binding wiring, from probes)
 GROUP_NAMES = [f"transform{k}" for k in range(4, 14)]
+
+# The 40 finger/thumb bones, by the name structure the whole module uses
+# ("_thumb_" / "_finger_", tips included). Sides are appended in main().
+_DIGIT_STEMS = ("thumb", "index_finger", "middle_finger", "ring_finger", "pinky_finger")
+FINGER_BONE_NAMES = [f"{side}_{stem}_{k}"
+                     for side in ("left", "right")
+                     for stem in _DIGIT_STEMS
+                     for k in ("1", "2", "3", "tip")]
 
 # Tolerances below are generous relative to what's actually measured (see this script's own
 # printed gate output, and the two cross-checks in main()); each comment gives the measured value.
@@ -54,6 +86,13 @@ CROSS_GROUP_TOL = 1e-6             # the ten groups share one fixed local (measu
 # alone accounts for ~1.7e-5 of chain drift (measured: ~9.4e-6 left, ~5.2e-6 right).
 GROUP_WORLD_SELFCHECK_TOL = 1e-3
 GATE_TOL = 1e-6                    # build-time reproduction gate (mirrors test_rig_v2_asset.py)
+# R14 tolerances.
+BASE_OFFSET_TOL = 1e-5             # base probe's finger bone OFFSETS must equal v1's, since a
+                                   # bone's local position is pose-independent (measured: 5.0e-7,
+                                   # which is just v1's own 6-decimal rounding)
+BASE_SYMMETRY_TOL_DEG = 0.01       # left vs right finger local in the base probe (measured: 1.8e-4)
+FK_BODY_SELFCHECK_TOL = 1e-4       # _fk_world_positions reproducing v1's stored body rest_world_p
+                                   # (measured worst: 1.9e-5, v1's rounding drift down the chain)
 
 
 def _mat_local(pos, quat_xyzw, scale):
@@ -98,6 +137,52 @@ def _finger1_to_group(probe):
     return {n["name"]: group_uuid_to_name[n["parent_uuid"]]
             for n in probe["nodes"]
             if n["type"] == "Bone" and n["parent_uuid"] in group_uuid_to_name}
+
+
+def _quat_deg(a_wxyz, b_wxyz):
+    """Angle between two [w,x,y,z] rotations, sign-normalised."""
+    a = np.asarray(a_wxyz, float); a = a / np.linalg.norm(a)
+    b = np.asarray(b_wxyz, float); b = b / np.linalg.norm(b)
+    return float(np.degrees(2 * np.arccos(min(1.0, abs(float(a @ b))))))
+
+
+def _unique_bone_nodes(probe):
+    """{name -> probe Bone node} for names that are UNAMBIGUOUS in the probe.
+
+    This asset's naming is not unique -- "joint7" names two unrelated bones
+    (see posegoblin_rig.py's module docstring) -- so ambiguous names are
+    dropped rather than silently resolved to whichever came last. Every name
+    this script actually looks up is asserted present at the call site."""
+    counts = {}
+    for n in probe["nodes"]:
+        if n["type"] == "Bone":
+            counts[n["name"]] = counts.get(n["name"], 0) + 1
+    return {n["name"]: n for n in probe["nodes"]
+            if n["type"] == "Bone" and counts[n["name"]] == 1}
+
+
+def _fk_world_positions(bones):
+    """{index -> (3,) world position} for an assembled v2 bone list, by
+    scale-aware FK from the bones' own rest locals.
+
+    Mirrors `posegoblin_rig.fk_world_positions` (kept in sync by hand): the
+    ten groups carry a 0.1 uniform scale that shrinks every offset beneath
+    them, which `_mat_local`'s `R * scale` in the upper 3x3 propagates down
+    the chain automatically as the matrices compose.
+
+    Resolved by memoized recursion, not a forward index pass: the ten
+    reconnected finger `_1` bones (14..57) parent to a group at 74..83,
+    ABOVE their own index."""
+    worlds = {}
+
+    def world_of(i):
+        if i not in worlds:
+            b = bones[i]
+            M = _mat_local(b["rest_local_p"], _wxyz_to_xyzw(b["rest_local_q"]), b["scale"])
+            worlds[i] = M if b["parent"] is None else world_of(b["parent"]) @ M
+        return worlds[i]
+
+    return {i: world_of(i)[:3, 3] for i in range(len(bones))}
 
 
 def _fk_world_matrices(v1_bones):
@@ -174,6 +259,38 @@ def main():
     name_to_i_v1 = {b["name"]: i for i, b in enumerate(v1_bones)}
 
     probes = [_load(p) for p in PROBE_PATHS]
+    base_nodes = _unique_bone_nodes(_load(BASE_PROBE_PATH))
+
+    # --- R14: the base probe really is a symmetric, same-skeleton hand ------
+    missing = [n for n in FINGER_BONE_NAMES if n not in base_nodes]
+    assert not missing, f"{BASE_PROBE_PATH.name} is missing (or duplicates) {missing}"
+    assert len(FINGER_BONE_NAMES) == 40
+
+    # (a) the bone OFFSETS must be v1's -- a local position is pose-independent,
+    #     so if these disagree the probe is not this skeleton and nothing below
+    #     is meaningful.
+    worst_offset = max(
+        float(np.abs(np.array(v1_bones[name_to_i_v1[n]]["rest_local_p"], float)
+                     - np.array(base_nodes[n]["pos"], float)).max())
+        for n in FINGER_BONE_NAMES)
+    assert worst_offset <= BASE_OFFSET_TOL, (
+        f"base probe finger offsets differ from v1 by {worst_offset} -- not the same skeleton")
+
+    # (b) the two hands must carry the SAME local quaternion. This is the
+    #     R14 gate: it is exactly what capture-rigrest-02 (v1's source) failed,
+    #     with the right hand curled 34 deg into a fist.
+    base_finger_q = {n: _xyzw_to_wxyz(base_nodes[n]["quat"]) for n in FINGER_BONE_NAMES}
+    worst_sym, worst_sym_name = 0.0, None
+    for n in FINGER_BONE_NAMES:
+        if not n.startswith("left_"):
+            continue
+        d = _quat_deg(base_finger_q[n], base_finger_q[n.replace("left", "right", 1)])
+        if d > worst_sym:
+            worst_sym, worst_sym_name = d, n
+    assert worst_sym <= BASE_SYMMETRY_TOL_DEG, (
+        f"base probe hands are NOT symmetric: {worst_sym_name} differs by "
+        f"{worst_sym:.4f} deg -- this probe was captured with a hand posed, "
+        f"which is the exact defect R14 removed from v1")
 
     # --- probe sanity: every Bone node reads scale ~= 1.0 -------------------
     worst_bone_scale = max(
@@ -225,16 +342,21 @@ def main():
     assert set(finger_to_group) == v1_orphans, (set(finger_to_group), v1_orphans)
 
     # --- assemble the 74 v1 bones: copy verbatim, add scale/is_group --------
+    # The 34 body bones keep v1's rest verbatim. The 40 finger/thumb bones take
+    # rest_local_q from the base-pose probe (R14); their rest_world_p is a
+    # placeholder here and is recomputed by FK once the groups exist below.
     out_bones = [{
         "name": b["name"],
         "parent": b["parent"],
-        "rest_local_q": b["rest_local_q"],
+        "rest_local_q": (base_finger_q[b["name"]] if b["name"] in base_finger_q
+                         else b["rest_local_q"]),
         "rest_local_p": b["rest_local_p"],
         "rest_world_p": b["rest_world_p"],
         "scale": 1.0,
         "is_group": False,
         "solve": b["solve"],
     } for b in v1_bones]
+    assert sum(1 for b in out_bones if b["name"] in base_finger_q) == 40
 
     # reconnect the ten finger islands through their group's (soon-to-exist) index
     group_index = {name: 74 + k for k, name in enumerate(GROUP_NAMES)}
@@ -296,13 +418,41 @@ def main():
     solved = sum(1 for b in out_bones if b["solve"])
     assert solved == 64
 
+    # --- R14: recompute the 40 finger bones' rest_world_p --------------------
+    # Their world geometry moves with the corrected locals, so v1's stored value
+    # is no longer true for them. Positive control FIRST: the same FK must
+    # reproduce the 34 BODY bones' stored rest_world_p, which this build does not
+    # touch -- if it cannot, the recomputed finger values are not trustworthy
+    # either, and a clean-looking rebuild would be meaningless.
+    fk_world_p = _fk_world_positions(out_bones)
+    body_dev, body_name = 0.0, None
+    for i, b in enumerate(out_bones[:74]):
+        if b["name"] in base_finger_q:
+            continue
+        d = float(np.abs(fk_world_p[i] - np.array(b["rest_world_p"], float)).max())
+        if d > body_dev:
+            body_dev, body_name = d, b["name"]
+    assert body_dev <= FK_BODY_SELFCHECK_TOL, (
+        f"_fk_world_positions does not reproduce v1's own body rest_world_p "
+        f"({body_name} off by {body_dev}) -- do not trust its finger output")
+
+    finger_moved = []
+    for i, b in enumerate(out_bones[:74]):
+        if b["name"] not in base_finger_q:
+            continue
+        was = np.array(b["rest_world_p"], float)
+        b["rest_world_p"] = [round(float(v), 6) for v in fk_world_p[i]]
+        finger_moved.append((float(np.linalg.norm(np.array(b["rest_world_p"]) - was)), b["name"]))
+    assert len(finger_moved) == 40
+
     doc = {
         "version": "posegoblin_rig_v2",
         "provenance": {
             "captured": "2026-08-22",
-            "source": ("posegoblin_rig_v1.json + capture-rigprobe-09.json + "
-                       "capture-rigrestprobe-10.json"),
-            "note": ("v1's 74 bones at the same indices, unchanged, plus ten Group nodes "
+            "source": ("posegoblin_rig_v1.json (34 body bones) + capture-rigbase2-11.json "
+                       "(40 finger/thumb bones, R14) + capture-rigprobe-09.json + "
+                       "capture-rigrestprobe-10.json (topology and the ten group constants)"),
+            "note": ("v1's 74 bones at the same indices, plus ten Group nodes "
                       "(transform4..13, indices 74..83) appended: the constant wrist-side "
                       "containers the ten *_thumb_1/*_finger_1 chains actually hang off on "
                       "the live rig (fixed rotation + 0.1 uniform scale). Their `parent` "
@@ -310,6 +460,21 @@ def main():
                       "(_1,_2,_3) flip solve:false -> true (tips stay false). Built by "
                       "tools_build_rig_v2.py, which re-runs and prints the reproduction-"
                       "gate numbers on every rebuild."),
+            "finger_rest_note": (
+                "R14 (2026-08-22): the 40 finger/thumb bones' rest_local_q comes from "
+                "capture-rigbase2-11.json -- the rig reset to its TRUE base pose -- NOT "
+                "from v1. v1's finger rest descends from capture-rigrest-02.json, which "
+                "was captured with the RIGHT hand curled into a partial fist: 33.87 deg "
+                "mean / 44.72 deg max from base on all 15 right phalanges, against 5.72 / "
+                "7.56 on the left. Harmless while nothing posed the fingers; v16 task 5 "
+                "applies rest_local o R(axis, angle), so a posed rest over-curls every "
+                "right hand by that amount. In the base pose the two hands carry the SAME "
+                "local quaternion on all 20 bones per side to 1.79e-4 deg. Those 40 bones' "
+                "rest_world_p is recomputed here by scale-aware FK (the _1 bones do not "
+                "move; _2/_3/_tip do). The 34 BODY bones keep v1's values verbatim -- the "
+                "base probe's body is at whatever pose the live app was showing and must "
+                "not be read for anything but the hands. posegoblin_rig_v1.json is "
+                "untouched and remains the historical asset."),
         },
         "bones": out_bones,
     }
@@ -323,7 +488,14 @@ def main():
             f"reproduction gate failed against {path.name}: worst error {worst} > {GATE_TOL}")
 
     V2.write_text(json.dumps(doc, indent=1))
+    finger_moved.sort(reverse=True)
     print(f"{len(out_bones)} nodes, {solved} solved, groups 74..83")
+    print(f"  R14 base-pose finger rest: hands symmetric to {worst_sym:.2e} deg "
+          f"({worst_sym_name}); offsets match v1 to {worst_offset:.2e}")
+    print(f"  R14 rest_world_p recomputed for 40 finger bones; FK reproduces the 34 body "
+          f"bones to {body_dev:.2e} ({body_name})")
+    print(f"     largest shift {finger_moved[0][0]:.4f} ({finger_moved[0][1]}), "
+          f"smallest {finger_moved[-1][0]:.2e} ({finger_moved[-1][1]})")
     print(f"wrote {V2} ({V2.stat().st_size/1024:.0f} KB)")
     for name, worst in gate_results.items():
         print(f"  gate vs {name}: worst |world - probe.world| = {worst:.3e}")

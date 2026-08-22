@@ -66,11 +66,21 @@ def test_load_rig_v2_default_has_84_nodes_and_matches_v1_geometry():
     v1 = load_rig(_V1_PATH)
     assert len(v1.order) == 74
 
+    # R14: the 40 finger/thumb bones' REST no longer comes from v1 -- v1's right
+    # hand was captured curled ~34 deg into a fist, and v16 composes onto rest.
+    # They now come from capture-rigbase2-11.json (the rig's true base pose) with
+    # rest_world_p recomputed; see tests/test_rig_v2_asset.py, which owns that
+    # contract. Everything else about indices 0..73 is still v1's, verbatim.
+    fingers = {i for i in range(74)
+               if "_thumb_" in rig.name[i] or "_finger_" in rig.name[i]}
+    assert len(fingers) == 40                            # positive control
     for i in range(74):
         assert rig.name[i] == v1.name[i]
-        assert np.array_equal(rig.rest_local_q[i], v1.rest_local_q[i])
+        if i not in fingers:
+            assert np.array_equal(rig.rest_local_q[i], v1.rest_local_q[i])
+            assert np.array_equal(rig.rest_world_p[i], v1.rest_world_p[i])
+        # bone OFFSETS are pose-independent and unchanged on every bone
         assert np.array_equal(rig.rest_local_p[i], v1.rest_local_p[i])
-        assert np.array_equal(rig.rest_world_p[i], v1.rest_world_p[i])
         assert float(rig.scale[i]) == 1.0    # only the ten NEW groups scale down
         assert not rig.is_group[i]           # groups are only ever appended at 74..83
         if rig.name[i] in _FINGER_THUMB_ROOTS:
