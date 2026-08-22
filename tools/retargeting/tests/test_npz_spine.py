@@ -28,12 +28,14 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from retargeting import mhr_rots_from_npz
 from retargeting.core.math_utils import QuaternionMath as QM
+from retargeting.retargeters import posegoblin_rig as PG
 from retargeting.retargeters.posegoblin_rig import (
-    fk_world_orientations, fk_world_positions, load_mhr_rest, load_rig,
-    rig_state_from_mhr70, rig_targets_from_mhr70, solve_rig_locals)
+    _mhr_delta_q, fk_world_orientations, fk_world_positions, load_mhr_rest,
+    load_rig, rig_state_from_mhr70, rig_targets_from_mhr70, solve_rig_locals)
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mhr_npz_rows.json"
 ROWS = json.loads(_FIXTURE.read_text())["rows"]
@@ -44,7 +46,9 @@ I = RIG.index_of_name
 
 # Rows of the 127-joint MHR kinematic skeleton (names from
 # bind_poses/mhr_skeleton_rest.json), NOT MHR-70 keypoint indices.
-MHR_SPINE1 = 35    # c_spine1 -> mannequin spine_1
+MHR_ROOT = 1       # root -> mannequin pelvis
+MHR_SPINE1 = 35    # c_spine1 -> mannequin spine_1 under SPINE_SOURCE_MHR
+MHR_SPINE2 = 36    # c_spine2 -> mannequin spine_1 under the DEFAULT mapping
 MHR_SPINE3 = 37    # c_spine3 -> mannequin spine_2
 MHR_NECK = 110     # c_neck
 
@@ -58,7 +62,11 @@ _CAM_TO_RIG_POS = np.array([1.0, -1.0, -1.0])
 # 0.03 tolerance fixed in advance. A delta-driven joint can never beat its
 # ceiling: the mannequin's and the MHR skeleton's rest geometries genuinely
 # differ, and a world delta cannot close that gap.
-SPINE1_SPINE2_FLOOR = 0.9612   # rest-vs-rest ceiling 0.9912 (7.6 deg)
+SPINE1_SPINE2_FLOOR = 0.9612   # rest-vs-rest ceiling 0.9912 (7.6 deg), c_spine1->c_spine3
+SPINE1_SPINE2_36_FLOOR = 0.9696  # ceiling 0.9996 (1.6 deg), c_spine2->c_spine3 -- the
+                                 # SEGMENT that actually corresponds to the mannequin's
+                                 # spine_1->spine_2, and the reference for every mapping
+                                 # that drives spine_1 from row 36
 SPINE2_NECK_FLOOR = 0.8216     # rest-vs-rest ceiling 0.8516 (31.6 deg)
 # pelvis->spine_1 is deliberately NOT scored: its direction is fixed by
 # W_R(pelvis) and the rig's rest offset, so spine_1's own rotation cannot
@@ -202,14 +210,41 @@ else:
     assert "SOLVED_16_GUARD_ARMED" in out.stdout, out.stdout
 
 
-def test_identity_deltas_leave_the_spine_at_rest():
-    """mhr_rots == the rest globals => every Delta is the identity => both
-    spine bones sit at their REST world orientations.
+def test_identity_deltas_leave_the_spine_straight_on_the_pelvis():
+    """Under the DEFAULT (relative) mapping: mhr_rots == the rest globals =>
+    every Delta is the identity => both spine bones sit at their REST LOCALS
+    exactly -- a straight column carried by whatever the pelvis anchor did.
+
+    That is the relative mapping's whole meaning, and it is a different
+    claim from the absolute mapping's (below): a straight model spine leaves
+    the mannequin's spine straight ON THE PELVIS WE PLACED, not straight in
+    world."""
+    R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
+    L = _solve(DEV_ROW, R_rest)
+    for name in ("spine_1", "spine_2"):
+        assert _quat_deg(L[I[name]], RIG.rest_local_q[I[name]]) < 1e-4, name
+
+    # Positive control: this row's spine is nowhere near its rest locals
+    # without the identity rots, so "at rest" above is a result, not a
+    # vacuous default.
+    L15 = _solve(DEV_ROW, None)
+    for name in ("spine_1", "spine_2"):
+        assert _quat_deg(L15[I[name]], RIG.rest_local_q[I[name]]) > 5.0, name
+
+
+def test_identity_deltas_leave_the_absolute_spine_at_rest_in_world(monkeypatch):
+    """The same probe under SPINE_SOURCE_MHR, where it means something else:
+    the two spine bones sit at their REST WORLD orientations.
+
+    Kept, not deleted, when the default moved -- it is the statement that
+    distinguishes the two mappings, and the reason the absolute one loses
+    bend whenever our pelvis and the model's root disagree.
 
     spine_2's LOCAL is its rest local exactly (its parent spine_1 is also at
     rest). spine_1's is not, and must not be: its parent, the pelvis, still
     carries the real pelvis anchor, so spine_1's local absorbs D(pelvis)^-1
     precisely to hold its world at rest."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
     R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
     L = _solve(DEV_ROW, R_rest)
@@ -225,9 +260,53 @@ def test_identity_deltas_leave_the_spine_at_rest():
         assert _quat_deg(W15[I[name]], Wr[I[name]]) > 5.0, name
 
 
-def test_global_arch_transfers_to_spine():
+def test_a_global_arch_cancels_but_a_spine_arch_does_not(monkeypatch):
+    """Under the DEFAULT (relative) mapping, the two halves of the frame
+    contract, and they point opposite ways on purpose.
+
+    (a) Left-multiplying EVERY MHR row by a fixed G rotates the model's root
+        along with its chest, so the chest-vs-root rotation is unchanged and
+        the mannequin's spine must not move at all. A relative transfer that
+        let a global arch through would be an absolute transfer wearing a
+        disguise.
+    (b) Arching ONLY the two spine rows the mapping reads must move the
+        spine -- otherwise (a) would be satisfied by a solve that ignores
+        `mhr_rots` entirely, which is exactly the vacuous pass CLAUDE.md
+        rule 1 warns about.
+    """
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
+    t = np.radians(25.0)
+    ax = np.array([1.0, 2.0, 3.0])
+    ax = ax / np.linalg.norm(ax)
+    qG = np.array([np.cos(t / 2), *(np.sin(t / 2) * ax)])
+    G = _wxyz_to_mat(qG)
+    real = _rots(DEV_ROW)
+
+    L0 = _solve(DEV_ROW, real)
+    L_all = _solve(DEV_ROW, G @ real)
+    for name in ("spine_1", "spine_2"):
+        moved = _quat_deg(L_all[I[name]], L0[I[name]])
+        assert moved < 1e-4, f"{name} moved {moved:.4f} deg under a GLOBAL arch"
+
+    # ONE row at a time. Arching BOTH spine rows together would leave
+    # spine_2's LOCAL untouched -- G cancels between a bone and its parent --
+    # so a both-rows probe is blind to exactly half of what it claims to
+    # cover (measured: spine_2 moves 0.0000 deg).
+    for name, row in (("spine_1", PG.SPINE_PERJOINT_SPINE1_ROW),
+                      ("spine_2", MHR_SPINE3)):
+        one = np.array(real, copy=True)
+        one[row] = G @ real[row]
+        moved = _quat_deg(_solve(DEV_ROW, one)[I[name]], L0[I[name]])
+        assert moved > 1.0, \
+            f"{name} moved only {moved:.4f} deg when its own row {row} was arched"
+
+
+def test_global_arch_transfers_to_spine(monkeypatch):
     """Left-multiply every MHR row by a fixed G and G must reappear, exactly,
-    as a world rotation on both spine bones.
+    as a world rotation on both spine bones -- under SPINE_SOURCE_MHR, whose
+    absolute world-delta contract this is. Kept when the default moved: it
+    is what pins `_mhr_delta_q`'s no-coordinate-conversion frame claim, and
+    the test above is the relative mapping's counterpart, not a replacement.
 
     The strongest check available here: it separates a correct transfer from
     a plausible-looking wrong one (a conjugated delta, a reversed multiply
@@ -245,6 +324,7 @@ def test_global_arch_transfers_to_spine():
     16.25 deg, and 48.15 deg for `diag(1,-1,-1)` itself -- so any of them
     lands far outside the 0.5 deg tolerance below. Do not "simplify" this
     back to a coordinate axis: each of the three is blind to 3 of the 23."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
     t = np.radians(25.0)
     ax = np.array([1.0, 2.0, 3.0])
     ax = ax / np.linalg.norm(ax)
@@ -270,8 +350,45 @@ def test_global_arch_transfers_to_spine():
         assert _quat_deg(d, qG) < 0.5, f"{name}: {_quat_deg(d, qG):.3f} deg off G"
 
 
-def test_spine_anchors_are_c_spine1_and_c_spine3():
-    """Which MHR rows drive the two spine bones, pinned as a contract.
+def test_default_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pelvis():
+    """Which MHR rows drive the two spine bones under the DEFAULT mapping,
+    and in which frame -- pinned as a contract.
+
+    W(bone) must be D(pelvis) . Delta(root)^-1 . Delta(row) . W_rest(bone):
+    the model's rotation RELATIVE TO ITS OWN ROOT, carried by the pelvis we
+    actually solved. Built as matrices, independent of the solver's
+    quaternion order and sign conventions.
+
+    Two positive controls, because two things could be wrong independently:
+    the ROW (checked against its neighbours) and the FRAME (checked against
+    the absolute form the same row would give, which is what v16 first
+    shipped)."""
+    R_pose = _rots(DEV_ROW)
+    R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+    L = _solve(DEV_ROW, R_pose)
+    W = _world(L)
+    D_pelvis = _wxyz_to_mat(L[I["pelvis"]]) @ _wxyz_to_mat(Wr[I["pelvis"]]).T
+    root = R_pose[1] @ R_rest[1].T
+
+    for bone, row in (("spine_1", PG.SPINE_PERJOINT_SPINE1_ROW), ("spine_2", MHR_SPINE3)):
+        got = _wxyz_to_mat(W[I[bone]])
+        delta = R_pose[row] @ R_rest[row].T
+        want = D_pelvis @ root.T @ delta @ _wxyz_to_mat(Wr[I[bone]])
+        assert np.abs(got - want).max() < 1e-6, f"{bone} is not row {row}, pelvis-relative"
+        for other in (row - 1, row + 1):
+            alt = D_pelvis @ root.T @ (R_pose[other] @ R_rest[other].T) @ _wxyz_to_mat(Wr[I[bone]])
+            assert np.abs(got - alt).max() > 1e-3, \
+                f"{bone}: rows {row} and {other} are indistinguishable here"
+        absolute = delta @ _wxyz_to_mat(Wr[I[bone]])
+        assert np.abs(got - absolute).max() > 1e-3, \
+            f"{bone}: the relative and absolute forms are indistinguishable on this row"
+
+
+def test_spine_anchors_are_c_spine1_and_c_spine3(monkeypatch):
+    """Which MHR rows drive the two spine bones under SPINE_SOURCE_MHR,
+    pinned as a contract. Kept when the default moved -- the mapping is
+    still reachable and still measured.
 
     The scored-direction test below CANNOT see this: swapping spine_2 from
     c_spine3 (37) to the positionally closer c_spine2 (36) leaves
@@ -286,6 +403,7 @@ def test_spine_anchors_are_c_spine1_and_c_spine3():
     Expectation built as MATRICES, independent of the solver's quaternion
     order and sign conventions: W(bone) must be Delta(row) @ W_rest(bone)
     with Delta(row) = R_pose(row) @ R_rest(row)^T."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
     R_pose = _rots(DEV_ROW)
     R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
@@ -305,28 +423,186 @@ def test_spine_anchors_are_c_spine1_and_c_spine3():
                 f"{bone}: rows {row} and {other} are indistinguishable here"
 
 
-def test_real_row_spine_directions_meet_anchored_floor():
-    """Real rots on all six fixture rows: the two spine edges the solve can
-    actually influence must land on the MHR skeleton's own directions.
+# The spine-edge check, per mapping. Two things vary with the mapping and
+# BOTH must, or the check measures something other than the spine:
+#
+#   the reference ROW for spine_1->spine_2 -- the segment must be the one the
+#   mapping actually drives (c_spine1->c_spine3 for the mapping v16 first
+#   shipped, c_spine2->c_spine3 for the two that drive spine_1 from row 36),
+#   with the floor re-derived from that pairing's own rest-vs-rest ceiling;
+#
+#   the reference FRAME -- an absolute transfer is checked in WORLD, and a
+#   relative one in the PELVIS's frame, by carrying the model's direction
+#   through D(pelvis) . Delta(root)^-1 first. Checking a relative transfer
+#   against a world reference measures how far our pelvis sits from the
+#   model's root (up to 43.8 deg on these captures) and blames the spine for
+#   it -- it would score the default at 0.8984 while the pelvis-relative
+#   check, which is the honest one for that mapping, scores it at 0.9996.
+_SPINE_EDGE_SPECS = {
+    #  source          spine_1 ref row, floor,                 relative frame
+    "mhr":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
+    "hybrid":       (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, False),
+    "v15":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
+    "rel_perjoint": (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True),
+}
+
+
+def _spine_edge_cosines(row_id, source):
+    """{edge label -> (cos, floor)} for the two spine edges the solve can
+    actually influence, on one row, under *source*'s own reference rows and
+    frame (see _SPINE_EDGE_SPECS).
 
     Reference directions come from `pred_joint_coords`, which is CAMERA
     frame, so they take `_CAM_TO_RIG_POS`. Floors are the measured
     rest-vs-rest ceilings minus 0.03 -- see the constants above."""
-    edges = (("spine_1", "spine_2", MHR_SPINE1, MHR_SPINE3, SPINE1_SPINE2_FLOOR),
+    row1, floor1, relative = _SPINE_EDGE_SPECS[source]
+    edges = (("spine_1", "spine_2", row1, MHR_SPINE3, floor1),
              ("spine_2", "neck", MHR_SPINE3, MHR_NECK, SPINE2_NECK_FLOOR))
-    scored, failures = 0, []
+    rots = _rots(row_id)
+    P_mhr = np.asarray(ROWS[row_id]["pred_joint_coords"], float)
+    L = _solve(row_id, rots)
+    P = fk_world_positions(RIG, {**RIG.rest_local_q, **L})
+    carry = None
+    if relative:
+        Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+        d_pelvis = QM.multiply(L[I["pelvis"]], QM.conjugate(Wr[I["pelvis"]]))
+        carry = QM.multiply(d_pelvis, QM.conjugate(_mhr_delta_q(rots, MHR_ROOT)))
+    out = {}
+    for parent, child, m_parent, m_child, floor in edges:
+        got = _unit(P[I[child]] - P[I[parent]])
+        want = _unit((P_mhr[m_child] - P_mhr[m_parent]) * _CAM_TO_RIG_POS)
+        if carry is not None:
+            want = QM.rotate_vector(carry, want)
+        out[f"{parent}->{child}"] = (float(np.dot(got, want)), floor)
+    return out
+
+
+# Which (row, edge) pairs sit BELOW their floor, per spine mapping, measured
+# 2026-08-22 over all sixteen fixture rows. Pinned as an exact set, in the
+# house style of `_KNOWN_INVERTED` in test_npz_fingers.py: a new violation
+# fails here, and so does a violation that quietly disappears -- either way
+# somebody must come back and re-measure.
+#
+# This was `assert not failures` while the fixture held only the six rows
+# that predate the spine captures. It is NOT weakened here: the floors are
+# untouched (R11 forbids moving them to make a run pass) and every violation
+# is named. What changed is the population -- ten hand-posed captures that
+# genuinely bend, arch and laterally flex the spine, directions the original
+# six never covered at all.
+#
+# The counts are the summary: the DEFAULT mapping violates once in 32 edges;
+# the mapping v16 first shipped violates 5 times, the hybrid 5, v15 7.
+_SPINE_FLOOR_VIOLATIONS = {
+    "rel_perjoint": {
+        ("8ea93cbf", "spine_2->neck"),      # scorpion-handstand, 0.8062
+    },
+    "mhr": {
+        ("1e6a7a60", "spine_1->spine_2"),   # 0.9504
+        ("8ea93cbf", "spine_1->spine_2"),   # 0.8911
+        ("8ea93cbf", "spine_2->neck"),      # 0.8062
+        ("9029c8a8", "spine_1->spine_2"),   # 0.9499
+        ("a9099833", "spine_1->spine_2"),   # 0.9371
+    },
+    "hybrid": {
+        ("3b66ffdf", "spine_2->neck"),      # 0.7943 -- spine_2 is v15's
+        ("4fe66c92", "spine_2->neck"),      # 0.7980    landmark anchor under
+        ("a5a0e4f1", "spine_2->neck"),      # 0.8171    the hybrid, so these
+        ("a75968b1", "spine_2->neck"),      # 0.7793    five are v15's too
+        ("b7c95336", "spine_2->neck"),      # 0.8039
+    },
+    "v15": {
+        ("1e6a7a60", "spine_1->spine_2"),   # 0.9581
+        ("3b66ffdf", "spine_2->neck"),      # 0.7943
+        ("4fe66c92", "spine_2->neck"),      # 0.7980
+        ("9029c8a8", "spine_1->spine_2"),   # 0.9572
+        ("a5a0e4f1", "spine_2->neck"),      # 0.8171
+        ("a75968b1", "spine_2->neck"),      # 0.7793
+        ("b7c95336", "spine_2->neck"),      # 0.8039
+    },
+}
+
+
+@pytest.mark.parametrize("source", sorted(_SPINE_EDGE_SPECS))
+def test_real_row_spine_directions_against_the_anchored_floors(source, monkeypatch):
+    """Real rots on every fixture row, under each spine mapping: exactly the
+    pinned (row, edge) pairs may sit below their floor, and no others."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", source)
+    scored, below = 0, set()
     for row_id in ROWS:
-        P_mhr = np.asarray(ROWS[row_id]["pred_joint_coords"], float)
-        P = fk_world_positions(RIG, {**RIG.rest_local_q, **_solve(row_id, _rots(row_id))})
-        for parent, child, m_parent, m_child, floor in edges:
-            got = _unit(P[I[child]] - P[I[parent]])
-            want = _unit((P_mhr[m_child] - P_mhr[m_parent]) * _CAM_TO_RIG_POS)
-            cos = float(np.dot(got, want))
+        for label, (cos, floor) in _spine_edge_cosines(row_id, source).items():
             scored += 1
             if cos < floor:
-                failures.append(f"{row_id[:8]} {parent}->{child}: cos {cos:.4f} < {floor}")
-    assert scored == 2 * len(ROWS), f"positive control: scored {scored} edges, expected 12"
-    assert not failures, "\n".join(failures)
+                below.add((row_id[:8], label))
+    assert scored == 2 * len(ROWS), f"positive control: scored {scored} edges"
+    want = _SPINE_FLOOR_VIOLATIONS[source]
+    assert below == want, (
+        f"{source}: new violations {sorted(below - want)}, "
+        f"repaired violations {sorted(want - below)}")
+
+
+def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monkeypatch):
+    """The machine-side comparison as an assertion rather than a number in a
+    report, INCLUDING the edge where the default does not win.
+
+    spine_1->spine_2: the default leads outright and sits at its ceiling.
+    spine_2->neck: v15's landmark anchor (which the hybrid shares) has the
+    better MEAN, 0.8700 against 0.8505 -- and the worse tail, min 0.7793
+    against 0.8062, which is why it violates the floor five times and the
+    default once. Both facts are asserted; the default was chosen on the
+    total chest-vs-pelvis error against the spine-zeroed captures (28.0 deg
+    vs 39.3), not on this metric, and hiding this one would misrepresent it.
+
+    Not a tautology -- `mhr` and `rel_perjoint` transfer the SAME row 37 to
+    spine_2 and score identically here once each is measured in its own
+    frame."""
+    stats = {}
+    for source in sorted(_SPINE_EDGE_SPECS):
+        monkeypatch.setattr(PG, "SPINE_SOURCE", source)
+        per: dict = {}
+        for row_id in ROWS:
+            for label, (cos, _) in _spine_edge_cosines(row_id, source).items():
+                per.setdefault(label, []).append(cos)
+        stats[source] = {k: (float(np.mean(v)), float(np.min(v))) for k, v in per.items()}
+
+    lead = max(stats, key=lambda s: stats[s]["spine_1->spine_2"][0])
+    assert lead == "rel_perjoint", f"{lead} leads spine_1->spine_2: {stats}"
+    assert stats["rel_perjoint"]["spine_1->spine_2"][0] > 0.999      # measured 0.9996
+
+    # spine_2->neck: better mean for the landmark anchor, worse worst case.
+    assert stats["v15"]["spine_2->neck"][0] > stats["rel_perjoint"]["spine_2->neck"][0]
+    assert stats["v15"]["spine_2->neck"][1] < stats["rel_perjoint"]["spine_2->neck"][1]
+    # `mhr` and `rel_perjoint` put spine_2 in the same place relative to
+    # their own reference frames, so this edge must agree between them --
+    # to 1e-5 rather than exactly, since the two reach it through different
+    # quaternion composition orders (measured 1.05e-06 apart).
+    assert stats["mhr"]["spine_2->neck"] == pytest.approx(
+        stats["rel_perjoint"]["spine_2->neck"], abs=1e-5)
+    # v15 and hybrid share spine_2's anchor by construction, so this edge is
+    # the same quantity in both -- but it is read off FK POSITIONS whose
+    # accumulation differs upstream at spine_1, which lands one ULP apart.
+    assert stats["v15"]["spine_2->neck"] == pytest.approx(
+        stats["hybrid"]["spine_2->neck"], abs=1e-12)
+
+
+def test_the_four_mappings_are_not_the_same_measurement(monkeypatch):
+    """Positive control for the parametrised test above: the pinned
+    violation sets must come from four genuinely different solves, not from
+    a monkeypatch that silently failed to take. On one row, the underlying
+    cosines must all differ."""
+    row = DEV_ROW
+    got = {}
+    for source in sorted(_SPINE_EDGE_SPECS):
+        monkeypatch.setattr(PG, "SPINE_SOURCE", source)
+        got[source] = {k: round(v[0], 4) for k, v in _spine_edge_cosines(row, source).items()}
+    pairs = [(a, b) for a in got for b in got if a < b]
+    assert len(pairs) == 6                                        # positive control
+    for a, b in pairs:
+        assert got[a] != got[b], f"{a} and {b} measure identically: {got[a]}"
+    # spine_2's anchor is shared by hybrid and v15 by construction, so its
+    # edge must MATCH there while spine_1's must not -- the sharpest
+    # statement available that the switch moves exactly what it claims to.
+    assert got["hybrid"]["spine_2->neck"] == got["v15"]["spine_2->neck"], got
+    assert got["hybrid"]["spine_1->spine_2"] != got["v15"]["spine_1->spine_2"], got
 
 
 # Every solved bone whose LOCAL legitimately differs between the two spine

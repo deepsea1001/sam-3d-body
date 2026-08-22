@@ -257,6 +257,91 @@ _MHR_SPINE_2 = 37   # c_spine3, NOT the positionally closer c_spine2 (36): the
                     # spine_2 from c_spine2 would leave the long
                     # c_spine2->c_spine3 segment's bend to surface at the neck
                     # instead of the mid-back.
+_MHR_SPINE_1_HYBRID = 36   # c_spine2 -- spine_1 under SPINE_SOURCE_HYBRID.
+                    # The mannequin has TWO spine bones where the human has
+                    # four, so the mannequin's spine_1 spans roughly
+                    # c_spine0..c_spine2. Rest-vs-rest, the mannequin's
+                    # spine_1->spine_2 segment sits 1.6 deg off MHR's
+                    # c_spine2->c_spine3 and 7.6 deg off c_spine1->c_spine3.
+_MHR_ROOT = 1       # `root`, the MHR joint the mannequin's pelvis corresponds
+                    # to; the parent end of the real pelvis->chest rotation.
+
+# Where the mannequin's spine comes from when the caller supplies
+# `mhr_rots`. Four named mappings, one switch, so every comparison in the
+# task-6b report stays reproducible instead of living in a scratch branch:
+SPINE_SOURCE_MHR = "mhr"        # v16 task 4: spine_1 <- Delta(35), spine_2 <- Delta(37)
+SPINE_SOURCE_HYBRID = "hybrid"  # spine_1 <- Delta(36); spine_2 keeps v15's
+                                # neck+clavicle construction (its world anchor
+                                # is then bit-identical to v15's)
+SPINE_SOURCE_V15 = "v15"        # both bones from v15 even with mhr_rots present
+                                # -- the fingers and the plumbing still ship
+SPINE_SOURCE_REAL_TOTAL = "real_total"
+                                # v15's DISTRIBUTION driven by v16's real
+                                # TOTAL: the pelvis->chest rotation comes from
+                                # the npz, the 65/35 swing split and the
+                                # twist-stays-at-the-chest rule are v15's,
+                                # untouched. See _anchor_deltas.
+SPINE_SOURCE_REL_PERJOINT = "rel_perjoint"
+                                # per-joint like SPINE_SOURCE_MHR, but each
+                                # bone takes the model's rotation RELATIVE TO
+                                # ITS OWN ROOT, composed onto the pelvis we
+                                # actually solved -- see _anchor_deltas.
+
+# Which MHR row drives spine_1 under SPINE_SOURCE_REL_PERJOINT. 36
+# (c_spine2), not the 35 (c_spine1) v16 first shipped: the mannequin has two
+# spine bones where the human has four, and it is the SEGMENT c_spine2->
+# c_spine3 that corresponds to spine_1->spine_2 -- 1.6 deg apart at rest,
+# against 7.6 deg for c_spine1->c_spine3. Driving spine_1 from the joint at
+# the base of that segment reproduces its direction to 0.9996 of the 0.9996
+# rest ceiling across all fifteen captures; row 35 reaches only 0.9593.
+SPINE_PERJOINT_SPINE1_ROW = 36
+
+# THE DEFAULT, and the measurement that chose it (task-6b report).
+#
+# The metric is the TOTAL chest-versus-pelvis rotation -- what the eye reads
+# as a curved back -- scored against six captures Scott hand-posed with the
+# spine joints ZEROED first, the only spine ground truth in this project
+# with no solver output underneath it. Mean error over those six:
+#
+#     v15 39.3 | mhr(35,37) 38.0 | hybrid 39.3 | real_total 39.3 | REL 28.0
+#
+# `hybrid` and `real_total` tie v15 exactly, and necessarily: both leave
+# spine_2's world anchor at v15's landmark construction and only
+# redistribute bend between the two bones, which cannot move a chest-vs-
+# pelvis total at all.
+#
+# What was actually wrong with SPINE_SOURCE_MHR is a FRAME error, not a
+# correspondence error. It applies Delta(row) as an ABSOLUTE world rotation
+# while the pelvis is anchored separately from the hip keypoints, so the
+# chest lands right in world terms and wrong relative to the pelvis we
+# placed -- and the relative bend absorbs the difference. Measured over the
+# six: the bend lost against what the model reports correlates with our
+# pelvis's disagreement with the model's root at r = +0.973 (0.9 deg
+# disagreement -> 0.0 deg lost; 43.8 deg -> 38.1 deg lost). Composing the
+# model's ROOT-RELATIVE rotation onto our own pelvis removes that by
+# construction, and reproduces the model's total bend magnitude exactly on
+# every capture.
+#
+# Residual error is dominated by something this module cannot fix: the MHR
+# model itself estimates about 81% of the bend Scott judges from the same
+# image.
+#
+# Beware the OTHER captures when re-deriving any of this. Everything posed
+# before 2026-08-22 16:00 was authored on top of a pose the review server
+# had already applied, and that server caches `retargetVersion 15` at
+# import -- so those captures are v15's own output plus a partial
+# correction, and v15's error against them is a LOWER BOUND, not an
+# estimate. Per-joint LOCAL error is confounded too, in a second way: Scott
+# poses with a control that distributes bend 65/35 between the two bones
+# because it is convenient and roughly anatomical, so per-joint error
+# penalises any method that distributes differently for reasons unrelated
+# to whether the pose is right. `provenance` on every entry in
+# tests/fixtures/ground_truth_captures.json says which set a capture is in.
+SPINE_SOURCE = SPINE_SOURCE_REL_PERJOINT
+
+_SPINE_SOURCES = frozenset({SPINE_SOURCE_MHR, SPINE_SOURCE_HYBRID,
+                            SPINE_SOURCE_V15, SPINE_SOURCE_REAL_TOTAL,
+                            SPINE_SOURCE_REL_PERJOINT})
 
 
 def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
@@ -666,7 +751,33 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             A[hi] = d
 
     s2, nk = li["spine_2"], li["neck"]
-    if mhr_rots is not None:
+    # A row with no `mhr_params_npz` blob has no rotations to read, so it
+    # takes v15 whatever the switch says. Resolving that here keeps every
+    # branch below reading ONE variable.
+    source = SPINE_SOURCE if mhr_rots is not None else SPINE_SOURCE_V15
+    if source not in _SPINE_SOURCES:
+        raise ValueError(
+            f"SPINE_SOURCE is {source!r} -- expected one of {sorted(_SPINE_SOURCES)}. "
+            f"Falling through to v15 on a typo would ship a different spine than "
+            f"the constant names, undetectably.")
+    pv0 = li["pelvis"]
+    if source == SPINE_SOURCE_REL_PERJOINT and pv0 in A:
+        # Per-joint, but RELATIVE. SPINE_SOURCE_MHR applies Delta(row) as an
+        # absolute world rotation while our pelvis is anchored independently
+        # from the hip keypoints -- so the chest lands right in world terms
+        # and wrong relative to the pelvis we actually placed, and the
+        # RELATIVE bend (the thing the eye reads as a curved back) absorbs
+        # the whole discrepancy. Measured: on the three spine-zeroed captures
+        # where our pelvis is furthest from the model's root, the absolute
+        # transfer throws away half to two thirds of the bend the model
+        # reports. Composing the model's root-relative rotation onto OUR
+        # pelvis removes that failure mode by construction.
+        root_d = QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_ROOT))
+        for bone, row in (("spine_1", SPINE_PERJOINT_SPINE1_ROW),
+                          ("spine_2", _MHR_SPINE_2)):
+            A[li[bone]] = QuaternionMath.multiply(
+                A[pv0], QuaternionMath.multiply(root_d, _mhr_delta_q(mhr_rots, row)))
+    elif source == SPINE_SOURCE_MHR:
         # v16 (task 4): the mannequin's spine posed from the MHR model's own
         # joint rotations, replacing the chest construction and the
         # swing-split below. Both are world deltas straight out of
@@ -677,10 +788,17 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
         A[li["spine_1"]] = _mhr_delta_q(mhr_rots, _MHR_SPINE_1)
         A[s2] = _mhr_delta_q(mhr_rots, _MHR_SPINE_2)
     else:
-        # v15: no MHR rotations for this row (no `mhr_params_npz` blob), so
-        # the column is built from keypoints alone. MHR-70 has no spine
-        # keypoints at all, which is what makes everything below necessary
-        # -- and what makes it strictly weaker than the branch above.
+        # v15's chest anchor, shared by SPINE_SOURCE_V15 and
+        # SPINE_SOURCE_HYBRID. Built from OBSERVABLE landmarks -- the neck
+        # direction plus the clavicle line -- where a real Delta(37) would
+        # transfer a rotation whose reference geometry is the MHR
+        # skeleton's, not the mannequin's. spine_2 carries the neck, the
+        # head and both arms, so that reference mismatch compounds down
+        # four chains; measured, it is where the all-real mapping loses.
+        #
+        # Rows with no blob reach here too (v15 proper), and MHR-70 has no
+        # spine keypoints at all -- which is what makes the swing-split
+        # below necessary for them.
         lc, rc = li["left_clavicle"], li["right_clavicle"]
         if all(k in targets for k in (s2, nk, lc, rc)):
             d = _pair_delta(rest[nk] - rest[s2], rest[lc] - rest[rc],
@@ -689,18 +807,56 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             if d is not None:
                 A[s2] = d
 
-        # Spine flexion (Scott 2026-08-21: "stiff as a board"). MHR-70 has no
-        # mid-spine keypoints -- spine1/spine2 targets are LINEAR INTERPOLATION
-        # root->neck (mhr70_retargeter.py JOINT_HIERARCHY), collinear by
-        # construction, so aiming them produced a straight rod with all torso
-        # pitch at the two end anchors (worse: the rod-aim over-rotated spine_1
-        # toward the chord, measured 84 deg of a 29 deg total). Instead spine_1
-        # takes exactly 65% of the pelvis->chest rotation along its geodesic --
-        # the lumbar share measured from Scott's own captures (crouch 60.7/32.8,
-        # hoop 37.0/19.9, both ~0.65) -- and spine_2's local absorbs the rest
-        # (its world anchor above is untouched).
         pv = li["pelvis"]
-        if pv in A and s2 in A:
+        if source == SPINE_SOURCE_HYBRID:
+            # The hybrid's whole content: spine_1 from the model's own
+            # rotation at c_spine2, spine_2 from the landmark anchor above.
+            # The swing-split below is skipped entirely -- it exists only to
+            # invent a spine_1 for a row with no rotation to read, and its
+            # 65% share is a CONSTANT where a real per-pose rotation can
+            # express a distribution that varies pose to pose.
+            A[li["spine_1"]] = _mhr_delta_q(mhr_rots, _MHR_SPINE_1_HYBRID)
+        # Spine flexion (Scott 2026-08-21: "stiff as a board"). Two separable
+        # halves, and this code deliberately keeps them separable: WHAT the
+        # total pelvis->chest rotation is, and HOW it is distributed across
+        # the mannequin's two spine bones.
+        #
+        # The DISTRIBUTION is not a tunable. Six captures hand-posed with the
+        # spine joints ZEROED first -- no solver output underneath them --
+        # span -37 deg extension, +76 deg flexion and 49 deg of lateral bend,
+        # and every one of them lands spine_1 at 0.650 +/- 0.002 of the total
+        # local bend. The mannequin's spine is effectively ONE degree of
+        # freedom for bend direction, split 65/35 by the rig itself.
+        # `_SPINE1_SHARE` is that behaviour, not a fudge factor: it was
+        # originally read off two captures (crouch 60.7/32.8, hoop
+        # 37.0/19.9), and the independent six confirm it. Do not touch it,
+        # and do not "improve" it by driving the two bones independently --
+        # per-joint real rotations cannot reproduce a fixed ratio, which is
+        # what SPINE_SOURCE_MHR and SPINE_SOURCE_HYBRID both founder on.
+        #
+        # The TOTAL is where v15 is genuinely weak, and it is the only thing
+        # SPINE_SOURCE_REAL_TOTAL changes.
+        elif pv in A and (source == SPINE_SOURCE_REAL_TOTAL or s2 in A):
+            if source == SPINE_SOURCE_REAL_TOTAL:
+                # v16: the REAL pelvis->chest rotation, straight out of the
+                # npz. Same construction as v15's, one joint pair over: the
+                # child's world delta expressed relative to the parent's.
+                # MHR-70 carries no mid-spine keypoints at all, so v15 has to
+                # INFER this total from a straight hipmid->neck chord plus the
+                # clavicle line -- which is exactly why the column reads
+                # "stiff as a board" (6.5-8.1 deg of bend regardless of pose).
+                r_rel = QuaternionMath.multiply(
+                    QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_ROOT)),
+                    _mhr_delta_q(mhr_rots, _MHR_SPINE_2))
+                chest = QuaternionMath.multiply(A[pv], r_rel)
+            else:
+                # v15: inferred from landmarks. `chest` IS A[s2] here, so
+                # every fallback below is bit-identical to the pre-refactor
+                # code (verified against the fixture rows, not assumed).
+                r_rel = QuaternionMath.multiply(QuaternionMath.conjugate(A[pv]), A[s2])
+                chest = A[s2]
+            if r_rel[0] < 0:
+                r_rel = -np.asarray(r_rel, float)
             # Split only the SWING (pitch + lateral) of the pelvis->chest
             # rotation; keep its TWIST about the torso axis concentrated at the
             # chest, as the pre-split solve did. Both anchors take their
@@ -710,9 +866,6 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             # corkscrews it (Scott's crow-pose report: 59.5 deg about -Y read
             # as an arch bending backwards). Swing alone curves the column the
             # way flexion looks.
-            r_rel = QuaternionMath.multiply(QuaternionMath.conjugate(A[pv]), A[s2])
-            if r_rel[0] < 0:
-                r_rel = -np.asarray(r_rel, float)
             chord = _unit_or_none(np.asarray(targets[nk], float)
                                   - 0.5 * (np.asarray(targets[li["left_hip"]], float)
                                            + np.asarray(targets[li["right_hip"]], float)))
@@ -727,9 +880,9 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                     part = _slerp(np.array([1.0, 0.0, 0.0, 0.0]), swing, _SPINE1_SHARE)
                     A[li["spine_1"]] = QuaternionMath.multiply(A[pv], part)
                 else:
-                    A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
+                    A[li["spine_1"]] = _slerp(A[pv], chest, _SPINE1_SHARE)
             else:
-                A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
+                A[li["spine_1"]] = _slerp(A[pv], chest, _SPINE1_SHARE)
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his

@@ -284,14 +284,19 @@ def test_left_and_right_share_one_measured_axis_after_r14():
 # --------------------------------------------------------------------------
 
 def _per_bone_alignment_medians(refs):
-    """{bone name -> median over the six fixture rows of dot(the corpus's OWN
-    bend axis, *refs*[bone])}. 30 bones, 6 samples each.
+    """{bone name -> median over EVERY fixture row of dot(the corpus's OWN
+    bend axis, *refs*[bone])}. 30 bones, one sample per row each.
 
-    PER BONE, deliberately (review finding). The pooled median over all 180
-    samples cannot see a single mis-signed digit -- 12 of 180 samples do not
-    move a median -- and a mis-signed digit reads downstream as hyperextension,
-    which the range-of-motion test tolerates. Per bone, one inverted digit is
-    three bones at -1 and impossible to miss."""
+    PER BONE, deliberately (review finding). The pooled median over all
+    30*len(ROWS) samples cannot see a single mis-signed digit -- 12 samples do
+    not move a median -- and a mis-signed digit reads downstream as
+    hyperextension, which the range-of-motion test tolerates. Per bone, one
+    inverted digit is three bones at -1 and impossible to miss.
+
+    The sample count below tracks `len(ROWS)` rather than a literal: the
+    fixture grew from 6 rows to 16 when the ten spine captures were added
+    (2026-08-22). It still asserts one sample per bone per row --
+    a row that silently failed to contribute is still a failure here."""
     per: dict = {}
     for row_id in ROWS:
         mr = rots(row_id)
@@ -304,7 +309,7 @@ def _per_bone_alignment_medians(refs):
                     axis, _ = QM.to_axis_angle(rel if rel[0] >= 0 else -rel)
                     per.setdefault(name, []).append(float(np.dot(axis, refs[name])))
                     prev = row
-    assert set(per) == set(_MHR_FINGER_ROWS) and all(len(v) == 6 for v in per.values())
+    assert set(per) == set(_MHR_FINGER_ROWS) and all(len(v) == len(ROWS) for v in per.values())
     return {n: float(np.median(v)) for n, v in per.items()}
 
 
@@ -525,25 +530,29 @@ def test_every_phalange_moves_off_rest_on_a_real_row():
 
 
 def test_no_phalange_is_ever_dead_across_the_whole_fixture():
-    """The same check widened to all six rows, with the floor the real data
-    actually supports rather than the one the dev row alone would allow.
+    """The same check widened to every fixture row, with the floor the real
+    data actually supports rather than the one the dev row alone would allow.
 
-    Per-bone MEDIAN over the six rows: 9.96 deg at worst (left_thumb_3).
-    Per-bone-per-ROW minimum: 0.659 deg, at `right_thumb_1` on one row -- small
-    because that joint's rotation is nearly ORTHOGONAL to the rig's flexion axis
-    there (alignment -0.069 on that row), so the projection correctly applies
-    almost none of it. That is the mechanism working, not a dead bone; a bone
-    the transfer never reaches sits at ~1e-9, eight orders of magnitude below."""
+    Measured over the ORIGINAL six rows: worst per-bone MEDIAN 9.96 deg
+    (left_thumb_3); worst per-bone-per-ROW minimum 0.659 deg, at
+    `right_thumb_1` -- small because that joint's rotation is nearly
+    ORTHOGONAL to the rig's flexion axis there (alignment -0.069 on that row),
+    so the projection correctly applies almost none of it. That is the
+    mechanism working, not a dead bone; a bone the transfer never reaches sits
+    at ~1e-9, eight orders of magnitude below. Re-measured over all sixteen
+    rows once the ten spine captures were added: worst median 9.42 deg
+    (right_thumb_1), worst single sample unchanged at 0.659 deg -- both still
+    clear of the floors, which are NOT moved here."""
     per_bone: dict = {}
     for row_id in ROWS:
         for n, v in _phalange_movement(row_id).items():
             per_bone.setdefault(n, []).append(v)
-    assert len(per_bone) == 30 and all(len(v) == 6 for v in per_bone.values())
+    assert len(per_bone) == 30 and all(len(v) == len(ROWS) for v in per_bone.values())
 
     quiet = {n: float(np.median(v)) for n, v in per_bone.items() if np.median(v) <= 5.0}
-    assert quiet == {}, quiet            # worst measured median 9.96 deg
+    assert quiet == {}, quiet            # worst measured median 9.42 deg over 16 rows
     never = {n: min(v) for n, v in per_bone.items() if min(v) <= 0.25}
-    assert never == {}, never            # worst measured single sample 0.659 deg
+    assert never == {}, never            # worst measured single sample 0.297 deg
 
 
 def test_the_movement_checks_name_the_bone_an_orthogonalised_reference_kills():
@@ -586,7 +595,11 @@ def test_the_movement_checks_name_the_bone_an_orthogonalised_reference_kills():
         _FINGER_REFS[RIG.version] = saved
 
     assert dead == {name: pytest.approx(2.36, abs=0.01)}, dead     # comfortably under the 5.0 deg floor
-    assert quiet == {name: pytest.approx(3.15, abs=0.01)}, quiet   # measured median across the six rows
+    # Re-pinned 2026-08-22 from 3.15 (six rows) to 2.78: the fixture gained
+    # the ten spine captures, so this median is taken over sixteen rows now.
+    # The dev-row number above is unchanged, which is the control that only
+    # the POPULATION moved and not the measurement.
+    assert quiet == {name: pytest.approx(2.78, abs=0.01)}, quiet   # median across all 16 rows
 
 
 def test_no_rotations_leaves_all_forty_finger_bones_at_rest():
