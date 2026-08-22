@@ -8,7 +8,7 @@ emitted JSON.
 Why measure instead of assume: v16 task 5's first design applied MHR's
 world rotation DELTA to each phalange. That is right when the two rigs'
 rests nearly agree (the spine, 7.6-31.6 deg apart) and wrong here -- the
-two rests' finger directions are 37-75 deg apart, and the transferred hand
+two rests' finger directions are 3-49 deg apart (median 27), and the transferred hand
 bent fingers sideways. The fix is to transfer a signed ANGLE about the
 rig's own joint axis, which means knowing that axis. `hand_poses.json`
 holds four hand-posed presets (Relaxed/Fist/Point/Spread) that exercise the
@@ -30,11 +30,21 @@ That is what the data supports: PoseGoblin stores a hand preset as one set
 of absolute LOCAL quaternions and applies it to both hands unchanged
 (verified -- `default_poses.json`'s "flex" right hand is bit-identical to
 `hand_poses.json`'s "Fist"), so each joint's axis is the same vector in
-each bone's own local frame, and measuring per side only redistributes the
-ANGLE. It does redistribute it: the v2 asset's right-hand rest sits 0.630
-of the way from the left-hand rest to the Fist on all 15 bones (a constant
-ratio -- the asset was captured with the right hand part-closed), so the
-right hand's rest-to-Fist angles are uniformly 63% of the left's.
+each bone's own local frame.
+
+R14 (2026-08-22): this used to redistribute the ANGLE as well -- the right
+hand's rest-to-Fist arcs came out uniformly 0.6300 of the left's, on all 15
+bones, because the v2 asset's rest was itself 63% closed on the right (it
+descended from `capture-rigrest-02.json`, captured with the right hand posed).
+The asset now takes its finger rest from the rig's true base pose, and the two
+hands' arcs agree to 1e-4 deg. The AXIS directions are unchanged to 0.0023 deg
+by that correction -- which is itself the corroboration that the miscapture was
+pure flexion about these very axes: a rest displaced ALONG the axis cannot
+change the direction of `conj(rest) o Fist`, only its magnitude.
+
+The left/right agreement is ASSERTED below, not assumed and never averaged: a
+disagreement would mean the base pose is not symmetric after all, which is a
+finding, not something to smooth over.
 """
 import datetime
 import json
@@ -48,6 +58,11 @@ from retargeting.retargeters.posegoblin_rig import load_rig
 HAND_POSES = Path("/Users/scotteaton/Dropbox/CODE/poseGoblin/poses/hand_poses.json")
 OUT = Path(__file__).resolve().parent / "bind_poses" / "mannequin_finger_axes.json"
 REFERENCE_POSE = "Fist"
+# R14 left/right agreement bounds. Measured on the corrected asset: 0.0023 deg
+# and 1.0e-4 deg -- these are ~40x and ~10x that, still four orders of magnitude
+# below the 34 deg asymmetry the old asset carried.
+AXIS_SYMMETRY_TOL_DEG = 0.1
+ARC_SYMMETRY_TOL_DEG = 0.001
 
 _DIGITS = {"thumb": ["thumb_1", "thumb_2", "thumb_3"]}
 for _f in ("index", "middle", "ring", "pinky"):
@@ -84,6 +99,25 @@ def main(hand_poses: Path = HAND_POSES, out: Path = OUT) -> None:
                     "fist_angle_deg": round(float(np.degrees(ang)), 6),
                 }
 
+    # R14 gate: the two hands must now agree, per bone, on BOTH the axis
+    # direction and the arc. Fail loudly rather than average -- see the module
+    # docstring. Measured on the corrected asset: 0.0023 deg / 1.0e-4 deg.
+    worst_axis, worst_arc, worst_name = 0.0, 0.0, None
+    for names in _DIGITS.values():
+        for nm in names:
+            a = np.asarray(bones["left_" + nm]["axis"], float)
+            b = np.asarray(bones["right_" + nm]["axis"], float)
+            ang = float(np.degrees(np.arccos(min(1.0, max(-1.0, float(a @ b))))))
+            worst_arc = max(worst_arc, abs(bones["left_" + nm]["fist_angle_deg"]
+                                           - bones["right_" + nm]["fist_angle_deg"]))
+            if ang > worst_axis:
+                worst_axis, worst_name = ang, nm
+    if worst_axis > AXIS_SYMMETRY_TOL_DEG or worst_arc > ARC_SYMMETRY_TOL_DEG:
+        raise SystemExit(
+            f"left/right finger axes DISAGREE (worst axis {worst_axis:.4f} deg on "
+            f"{worst_name}, worst arc {worst_arc:.4f} deg). The rig asset's two hands "
+            f"are not at the same rest -- do not average this away, find out why.")
+
     doc = {
         "version": 1,
         "provenance": {
@@ -101,6 +135,10 @@ def main(hand_poses: Path = HAND_POSES, out: Path = OUT) -> None:
     }
     Path(out).write_text(json.dumps(doc, indent=1))
     print(f"wrote {out} ({out.stat().st_size / 1024:.1f} KB, {len(bones)} bones)")
+    print(f"  left/right agreement: axis {worst_axis:.2e} deg (worst on {worst_name}), "
+          f"arc {worst_arc:.2e} deg")
+    arcs = [v["fist_angle_deg"] for v in bones.values()]
+    print(f"  rest->Fist arcs: {min(arcs):.2f}..{max(arcs):.2f} deg")
 
 
 if __name__ == "__main__":
