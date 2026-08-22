@@ -42,16 +42,28 @@ versions stay loadable (`load_rig(path=...)`) -- the FK self-consistency
 tests pin exactly what's reachable from pelvis and what's actually solved,
 so a future re-rig that changes either shows up as a failing assertion,
 never as silence.
+
+The spine is posed from the MHR model's OWN joint rotations since v16 task
+4, when the caller supplies them (`mhr_rots`); MHR-70 has no spine
+keypoints, so without them the column can only be posed by splitting the
+pelvis->chest rotation between two anchors, and pelvis-vs-chest pitch is
+structurally unobservable ("stiff as a board"). Every corpus row carries
+the full parametric solve in its `mhr_params_npz` blob -- see
+`mhr_rots_from_npz`, `load_mhr_rest` and `_mhr_delta_q` below. Rows without
+the blob still take the v15 path, which is kept intact under `mhr_rots is
+None`.
 """
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+import io
 import json
 import numpy as np
 
 from ..core.math_utils import QuaternionMath
 
 _ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "posegoblin_rig_v2.json"
+_MHR_REST_ASSET = Path(__file__).resolve().parent.parent / "bind_poses" / "mhr_skeleton_rest.json"
 
 
 @dataclass(frozen=True)
@@ -141,6 +153,106 @@ def load_rig(path: Path = _ASSET) -> Rig:
         solve={i: bool(b["solve"]) for i, b in enumerate(bones)},
         index_of_name=index_of_name,
     )
+
+
+_MHR_REST: dict | None = None
+
+
+def load_mhr_rest() -> dict:
+    """The MHR kinematic skeleton's REST pose, parsed once and cached.
+
+    `bind_poses/mhr_skeleton_rest.json` (v16 task 1) is a committed fixture
+    extracted from checkpoints/mhr_model.pt ONCE, offline. Nothing on the
+    runtime path may re-derive it: reading the checkpoint means importing
+    torch, and this module is imported by the poseforge3d harness and the
+    review server, neither of which has any other reason to load a
+    multi-gigabyte model. Numpy and json only, therefore, and a
+    module-level singleton so a per-row solve does not re-read the file.
+
+    Returns `{"q_wxyz": (127,4) ndarray, "names": [...], "parents": [...]}`.
+    `q_wxyz[j]` is joint j's rotation to MHR MODEL world -- already
+    accumulated down the chain, in the solver's [w,x,y,z] convention (the
+    fixture is authored that way; three.js and the PoseGoblin captures use
+    [x,y,z,w]).
+    """
+    global _MHR_REST
+    if _MHR_REST is None:
+        d = json.loads(_MHR_REST_ASSET.read_text())
+        _MHR_REST = {
+            "q_wxyz": np.asarray(d["rest_global_q_wxyz"], float),
+            "names": list(d["names"]),
+            "parents": list(d["parents"]),
+        }
+    return _MHR_REST
+
+
+def mhr_rots_from_npz(blob: bytes) -> np.ndarray | None:
+    """Decode `joint_global_rots` from a shard's `mhr_params_npz` blob.
+
+    Numpy only -- the blob is a plain `np.savez_compressed` archive of the
+    SAM-3D parametric output (poseforge3d `runner._serialize_mhr_params`),
+    stored float32; this returns float64 because every consumer here is
+    quaternion math against the float64 rest fixture.
+
+    Returns None for empty bytes (a row whose blob was never written) and
+    for an archive without the key (the mock estimator writes a valid but
+    empty npz) -- both mean "no rotations for this row", and the caller
+    falls back to the v15 spine. A PRESENT but wrong-shaped array is a
+    different thing entirely and raises, rather than surfacing later as an
+    IndexError inside quaternion math.
+    """
+    if not blob:
+        return None
+    with np.load(io.BytesIO(blob)) as z:
+        if "joint_global_rots" not in z:
+            return None
+        rots = np.asarray(z["joint_global_rots"], float)
+    if rots.shape != (127, 3, 3):
+        raise ValueError(
+            f"joint_global_rots has shape {rots.shape}, expected (127, 3, 3) -- "
+            f"the 127-joint MHR kinematic skeleton this module's rest fixture "
+            f"and spine rows are both indexed against")
+    return rots
+
+
+# Rows of the 127-joint MHR kinematic skeleton (names from
+# bind_poses/mhr_skeleton_rest.json) that drive the mannequin's two spine
+# bones. NOT MHR-70 keypoint indices -- a different ordering entirely.
+_MHR_SPINE_1 = 35   # c_spine1
+_MHR_SPINE_2 = 37   # c_spine3, NOT the positionally closer c_spine2 (36): the
+                    # mannequin's neck and both clavicles hang off spine_2
+                    # exactly as the human's hang off c_spine3, so driving
+                    # spine_2 from c_spine2 would leave the long
+                    # c_spine2->c_spine3 segment's bend to surface at the neck
+                    # instead of the mid-back.
+
+
+def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
+    """World rotation delta for MHR skeleton *row*, as [w,x,y,z].
+
+        Delta(j) = R_pose(j) @ R_rest(j)^T
+
+    -- directly usable as a RIG-frame world delta, with NO coordinate
+    conversion. That is the crux of the v16 spine and it is verified, not
+    assumed: the SAM head applies its camera flip diag(1,-1,-1) to
+    COORDINATES but not to `joint_global_rots`, and the solver's own cv->rig
+    position map (cv_to_yup's -Y composed with `_CV_YUP_TO_RIG`'s -Z) is
+    that same matrix -- the two cancel, so MHR model space and rig space are
+    the same ROTATIONAL frame. Measured two ways: a bone-direction control
+    over 30 corpus rows x 12 body bones lands at min cosine +0.9995 using
+    this identity (test_mhr_rest_fixture.py reproduces it on the committed
+    fixture), and the global-arch test in test_npz_spine.py recovers a
+    planted rotation exactly.
+
+    Do NOT "fix" a mirrored-looking result by inserting a flip here.
+    Positions need the map and rotations do not; the two facts are not in
+    conflict, they are different quantities. Applying the camera map to
+    model-frame rotations produces two upright skeletons pointing 160 deg
+    apart -- plausible-looking and wrong.
+    """
+    return QuaternionMath.multiply(
+        QuaternionMath.from_matrix(np.asarray(mhr_rots, float)[row]),
+        QuaternionMath.conjugate(load_mhr_rest()["q_wxyz"][row]))
 
 
 def fk_world_orientations(rig: Rig, local_q: dict) -> dict:
@@ -407,12 +519,16 @@ def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
     return None if best is None else best[1]
 
 
-def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
-                   Wr: dict) -> dict[int, np.ndarray]:
+def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
+                   mhr_rots: np.ndarray | None = None) -> dict[int, np.ndarray]:
     """World deltas for the anchored bones: pelvis (hip frame), the four limb
-    chains (bend-plane hinge), the head (nose + eye line) and spine_2
-    (neck + clavicle line). Facing and twist become constraints here; the
-    generic per-bone direction solve cannot see either."""
+    chains (bend-plane hinge), the head (nose + eye line) and the two spine
+    bones. Facing and twist become constraints here; the generic per-bone
+    direction solve cannot see either.
+
+    *mhr_rots*, when given, is a (127,3,3) `joint_global_rots` array
+    (`mhr_rots_from_npz`) and drives the spine directly -- see the spine
+    block below. None keeps the v15 construction, for rows with no blob."""
     li = rig.index_of_name
     rest = rig.rest_world_p
     A: dict[int, np.ndarray] = {}
@@ -518,55 +634,70 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray],
             A[hi] = d
 
     s2, nk = li["spine_2"], li["neck"]
-    lc, rc = li["left_clavicle"], li["right_clavicle"]
-    if all(k in targets for k in (s2, nk, lc, rc)):
-        d = _pair_delta(rest[nk] - rest[s2], rest[lc] - rest[rc],
-                        np.asarray(targets[nk], float) - np.asarray(targets[s2], float),
-                        np.asarray(targets[lc], float) - np.asarray(targets[rc], float))
-        if d is not None:
-            A[s2] = d
+    if mhr_rots is not None:
+        # v16 (task 4): the mannequin's spine posed from the MHR model's own
+        # joint rotations, replacing the chest construction and the
+        # swing-split below. Both are world deltas straight out of
+        # `_mhr_delta_q` -- no coordinate conversion, see there. spine_1
+        # takes c_spine1 and spine_2 takes c_spine3 (`_MHR_SPINE_2`, not the
+        # positionally closer c_spine2). The neck bridge at the end of this
+        # function reads `A[s2]` either way and needs no branch of its own.
+        A[li["spine_1"]] = _mhr_delta_q(mhr_rots, _MHR_SPINE_1)
+        A[s2] = _mhr_delta_q(mhr_rots, _MHR_SPINE_2)
+    else:
+        # v15: no MHR rotations for this row (no `mhr_params_npz` blob), so
+        # the column is built from keypoints alone. MHR-70 has no spine
+        # keypoints at all, which is what makes everything below necessary
+        # -- and what makes it strictly weaker than the branch above.
+        lc, rc = li["left_clavicle"], li["right_clavicle"]
+        if all(k in targets for k in (s2, nk, lc, rc)):
+            d = _pair_delta(rest[nk] - rest[s2], rest[lc] - rest[rc],
+                            np.asarray(targets[nk], float) - np.asarray(targets[s2], float),
+                            np.asarray(targets[lc], float) - np.asarray(targets[rc], float))
+            if d is not None:
+                A[s2] = d
 
-    # Spine flexion (Scott 2026-08-21: "stiff as a board"). MHR-70 has no
-    # mid-spine keypoints -- spine1/spine2 targets are LINEAR INTERPOLATION
-    # root->neck (mhr70_retargeter.py JOINT_HIERARCHY), collinear by
-    # construction, so aiming them produced a straight rod with all torso
-    # pitch at the two end anchors (worse: the rod-aim over-rotated spine_1
-    # toward the chord, measured 84 deg of a 29 deg total). Instead spine_1
-    # takes exactly 65% of the pelvis->chest rotation along its geodesic --
-    # the lumbar share measured from Scott's own captures (crouch 60.7/32.8,
-    # hoop 37.0/19.9, both ~0.65) -- and spine_2's local absorbs the rest
-    # (its world anchor above is untouched).
-    pv = li["pelvis"]
-    if pv in A and s2 in A:
-        # Split only the SWING (pitch + lateral) of the pelvis->chest
-        # rotation; keep its TWIST about the torso axis concentrated at the
-        # chest, as the pre-split solve did. Both anchors take their
-        # vertical from the same hipmid->neck chord (no mid-spine keypoints
-        # exist), so their relative rotation is dominated by hips-vs-
-        # clavicles TWIST -- and distributing twist along the column
-        # corkscrews it (Scott's crow-pose report: 59.5 deg about -Y read
-        # as an arch bending backwards). Swing alone curves the column the
-        # way flexion looks.
-        r_rel = QuaternionMath.multiply(QuaternionMath.conjugate(A[pv]), A[s2])
-        if r_rel[0] < 0:
-            r_rel = -np.asarray(r_rel, float)
-        chord = _unit_or_none(np.asarray(targets[nk], float)
-                              - 0.5 * (np.asarray(targets[li["left_hip"]], float)
-                                       + np.asarray(targets[li["right_hip"]], float)))
-        if chord is not None:
-            axis_p = QuaternionMath.rotate_vector(QuaternionMath.conjugate(A[pv]), chord)
-            d_par = float(np.dot(r_rel[1:], axis_p))
-            tw = np.array([r_rel[0], *(d_par * np.asarray(axis_p, float))])
-            ntw = np.linalg.norm(tw)
-            if ntw > 1e-9:
-                tw = tw / ntw
-                swing = QuaternionMath.multiply(r_rel, QuaternionMath.conjugate(tw))
-                part = _slerp(np.array([1.0, 0.0, 0.0, 0.0]), swing, _SPINE1_SHARE)
-                A[li["spine_1"]] = QuaternionMath.multiply(A[pv], part)
+        # Spine flexion (Scott 2026-08-21: "stiff as a board"). MHR-70 has no
+        # mid-spine keypoints -- spine1/spine2 targets are LINEAR INTERPOLATION
+        # root->neck (mhr70_retargeter.py JOINT_HIERARCHY), collinear by
+        # construction, so aiming them produced a straight rod with all torso
+        # pitch at the two end anchors (worse: the rod-aim over-rotated spine_1
+        # toward the chord, measured 84 deg of a 29 deg total). Instead spine_1
+        # takes exactly 65% of the pelvis->chest rotation along its geodesic --
+        # the lumbar share measured from Scott's own captures (crouch 60.7/32.8,
+        # hoop 37.0/19.9, both ~0.65) -- and spine_2's local absorbs the rest
+        # (its world anchor above is untouched).
+        pv = li["pelvis"]
+        if pv in A and s2 in A:
+            # Split only the SWING (pitch + lateral) of the pelvis->chest
+            # rotation; keep its TWIST about the torso axis concentrated at the
+            # chest, as the pre-split solve did. Both anchors take their
+            # vertical from the same hipmid->neck chord (no mid-spine keypoints
+            # exist), so their relative rotation is dominated by hips-vs-
+            # clavicles TWIST -- and distributing twist along the column
+            # corkscrews it (Scott's crow-pose report: 59.5 deg about -Y read
+            # as an arch bending backwards). Swing alone curves the column the
+            # way flexion looks.
+            r_rel = QuaternionMath.multiply(QuaternionMath.conjugate(A[pv]), A[s2])
+            if r_rel[0] < 0:
+                r_rel = -np.asarray(r_rel, float)
+            chord = _unit_or_none(np.asarray(targets[nk], float)
+                                  - 0.5 * (np.asarray(targets[li["left_hip"]], float)
+                                           + np.asarray(targets[li["right_hip"]], float)))
+            if chord is not None:
+                axis_p = QuaternionMath.rotate_vector(QuaternionMath.conjugate(A[pv]), chord)
+                d_par = float(np.dot(r_rel[1:], axis_p))
+                tw = np.array([r_rel[0], *(d_par * np.asarray(axis_p, float))])
+                ntw = np.linalg.norm(tw)
+                if ntw > 1e-9:
+                    tw = tw / ntw
+                    swing = QuaternionMath.multiply(r_rel, QuaternionMath.conjugate(tw))
+                    part = _slerp(np.array([1.0, 0.0, 0.0, 0.0]), swing, _SPINE1_SHARE)
+                    A[li["spine_1"]] = QuaternionMath.multiply(A[pv], part)
+                else:
+                    A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
             else:
                 A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
-        else:
-            A[li["spine_1"]] = _slerp(A[pv], A[s2], _SPINE1_SHARE)
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
@@ -662,7 +793,8 @@ def solved_indices(rig: Rig) -> list:
             if rig.solve[i] and rig.name[i] not in _FINGER_PHALANGE_NAMES]
 
 
-def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
+                     mhr_rots: np.ndarray | None = None) -> dict[int, np.ndarray]:
     """Solve absolute local quaternions posing the rig onto *targets*.
 
     Per bone, a world DELTA D(b) rotates the rig's rest bone directions onto
@@ -693,13 +825,19 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray]) -> dict[int, np.n
     no target is dropped from `pairs` before it can influence anything).
     Unsolved bones fall back to their rest locals; that fallback is the
     caller's job (`rig_state_from_mhr70`), not this function's.
+
+    *mhr_rots*, when given, is this row's (127,3,3) `joint_global_rots`
+    (`mhr_rots_from_npz`); it poses the spine from the model's own
+    rotations instead of the v15 construction. Optional with a None default
+    so existing call sites -- the poseforge3d harness and bridge -- keep
+    working untouched, and so rows whose blob is missing still solve.
     """
     Wr = fk_world_orientations(rig, rig.rest_local_q)
     solved = solved_indices(rig)
     # Anchored bones get exact frame deltas (facing and hinge twist are
     # constraints there); everything else falls through to the generic
     # child-direction solve below. See _anchor_deltas.
-    anchors = _anchor_deltas(rig, targets, Wr)
+    anchors = _anchor_deltas(rig, targets, Wr, mhr_rots)
     D: dict = {}
     for n in solved:
         if n in anchors:
@@ -943,13 +1081,18 @@ def _assert_all_finite(state: dict) -> None:
         raise ValueError(f"non-finite value in groundY: {state['groundY']}")
 
 
-def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
+def rig_state_from_mhr70(kp_cam: np.ndarray, mhr_rots: np.ndarray | None = None) -> dict:
     """(70,3) CV camera keypoints -> full mannequinState for the PoseGoblin
-    viewer: every rig bone posed (rig units), ready to serialize."""
+    viewer: every rig bone posed (rig units), ready to serialize.
+
+    *mhr_rots* is this row's (127,3,3) `joint_global_rots` when its
+    `mhr_params_npz` blob is available (`mhr_rots_from_npz`), and poses the
+    spine from the model's own rotations; None keeps the v15 spine."""
     rig = load_rig()
     li = rig.index_of_name
     targets = rig_targets_from_mhr70(kp_cam)
-    solved = solve_rig_locals(rig, targets)   # index-keyed, the 34 SOLVED bones ONLY (ruling 7)
+    # index-keyed, the 34 SOLVED bones ONLY (ruling 7)
+    solved = solve_rig_locals(rig, targets, mhr_rots)
 
     if ROOT_DISPLAY_YAW_DEG:
         t = np.radians(ROOT_DISPLAY_YAW_DEG)
@@ -1051,7 +1194,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray) -> dict:
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 15,
+        "retargetVersion": 16,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
