@@ -1,0 +1,1942 @@
+{
+ "version": "posegoblin_rig_v2",
+ "provenance": {
+  "captured": "2026-08-22",
+  "source": "posegoblin_rig_v1.json + capture-rigprobe-09.json + capture-rigrestprobe-10.json",
+  "note": "v1's 74 bones at the same indices, unchanged, plus ten Group nodes (transform4..13, indices 74..83) appended: the constant wrist-side containers the ten *_thumb_1/*_finger_1 chains actually hang off on the live rig (fixed rotation + 0.1 uniform scale). Their `parent` flips from null to their group's index; the 30 finger phalanges (_1,_2,_3) flip solve:false -> true (tips stay false). Built by tools_build_rig_v2.py; see that file and task-2-report.md for the reproduction-gate numbers."
+ },
+ "bones": [
+  {
+   "name": "pelvis",
+   "parent": null,
+   "rest_local_q": [
+    0.707107,
+    -0.707107,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    10.478579,
+    0
+   ],
+   "rest_world_p": [
+    0,
+    10.478579,
+    0
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "spine_1",
+   "parent": 0,
+   "rest_local_q": [
+    0.702683,
+    0.702683,
+    0.078971,
+    0.078971
+   ],
+   "rest_local_p": [
+    0,
+    -0.195653,
+    1.126156
+   ],
+   "rest_world_p": [
+    0,
+    11.604735,
+    0.195653
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "spine_2",
+   "parent": 1,
+   "rest_local_q": [
+    0.998185,
+    0,
+    0.060226,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    1.374257,
+    0.110878
+   ],
+   "rest_world_p": [
+    0.024611,
+    12.978992,
+    0.303765
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "neck",
+   "parent": 2,
+   "rest_local_q": [
+    0.705541,
+    -0.047029,
+    0.047029,
+    0.705541
+   ],
+   "rest_local_p": [
+    0,
+    2.774204,
+    -0.329422
+   ],
+   "rest_world_p": [
+    -0.086599,
+    15.753196,
+    -0.006318
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "head",
+   "parent": 3,
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    1.165598,
+    0,
+    0.172065
+   ],
+   "rest_world_p": [
+    -0.081251,
+    16.931319,
+    0.008593
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "nose",
+   "parent": 4,
+   "rest_local_q": [
+    0.707107,
+    0,
+    0,
+    -0.707107
+   ],
+   "rest_local_p": [
+    -0.067848,
+    0,
+    1.232761
+   ],
+   "rest_world_p": [
+    0.334276,
+    17.027687,
+    1.167193
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_eye",
+   "parent": 5,
+   "rest_local_q": [
+    0.985001,
+    0,
+    0,
+    -0.17255
+   ],
+   "rest_local_p": [
+    0.369657,
+    0.480101,
+    -0.184365
+   ],
+   "rest_world_p": [
+    0.599032,
+    17.479071,
+    0.810414
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_ear",
+   "parent": 6,
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.403948,
+    0.136991,
+    -1.049557
+   ],
+   "rest_world_p": [
+    0.649649,
+    17.331369,
+    -0.311697
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_eye",
+   "parent": 5,
+   "rest_local_q": [
+    0,
+    0.985001,
+    0.17255,
+    0
+   ],
+   "rest_local_p": [
+    -0.369657,
+    0.480129,
+    -0.184362
+   ],
+   "rest_world_p": [
+    -0.09688,
+    17.4791,
+    1.06
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_ear",
+   "parent": 8,
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -0.403947,
+    -0.136994,
+    1.049557
+   ],
+   "rest_world_p": [
+    -0.849111,
+    17.3314,
+    0.225828
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_clavicle",
+   "parent": 2,
+   "rest_local_q": [
+    0.707107,
+    -0.707107,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.231957,
+    2.506994,
+    -0.026351
+   ],
+   "rest_world_p": [
+    0.234055,
+    15.485986,
+    0.200654
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_shoulder",
+   "parent": 10,
+   "rest_local_q": [
+    0.053603,
+    -0.945759,
+    -0.208003,
+    0.243725
+   ],
+   "rest_local_p": [
+    1.414637,
+    0.525905,
+    -0.581567
+   ],
+   "rest_world_p": [
+    1.388102,
+    14.904419,
+    -0.771945
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_elbow",
+   "parent": 11,
+   "rest_local_q": [
+    0.004332,
+    0.980258,
+    0.196492,
+    0.021613
+   ],
+   "rest_local_p": [
+    2.863699,
+    0.13885,
+    0.011073
+   ],
+   "rest_world_p": [
+    3.210082,
+    13.610234,
+    -2.567954
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_wrist",
+   "parent": 12,
+   "rest_local_q": [
+    0.530223,
+    0.530223,
+    -0.467828,
+    0.467828
+   ],
+   "rest_local_p": [
+    2.788806,
+    -0.460185,
+    -0.004846
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_thumb_1",
+   "parent": 74,
+   "rest_local_q": [
+    0.937867,
+    0.264995,
+    -0.0396,
+    0.220489
+   ],
+   "rest_local_p": [
+    -3.163619,
+    2.903607,
+    1.424599
+   ],
+   "rest_world_p": [
+    5.855567,
+    11.901008,
+    -2.783403
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_thumb_2",
+   "parent": 14,
+   "rest_local_q": [
+    0.976371,
+    -0.008907,
+    0.000545,
+    -0.215916
+   ],
+   "rest_local_p": [
+    0,
+    4.187095,
+    0
+   ],
+   "rest_world_p": [
+    6.076672,
+    11.57208,
+    -2.648359
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_thumb_3",
+   "parent": 15,
+   "rest_local_q": [
+    0.999162,
+    -3e-05,
+    0.000745,
+    -0.040932
+   ],
+   "rest_local_p": [
+    0,
+    3.418388,
+    0
+   ],
+   "rest_world_p": [
+    6.239148,
+    11.273161,
+    -2.681564
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_thumb_tip",
+   "parent": 16,
+   "rest_local_q": [
+    0.991558,
+    0.005153,
+    0.122683,
+    0.041652
+   ],
+   "rest_local_p": [
+    0,
+    2.580581,
+    0
+   ],
+   "rest_world_p": [
+    6.355833,
+    11.047499,
+    -2.726897
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "left_index_finger_1",
+   "parent": 75,
+   "rest_local_q": [
+    0.988073,
+    0.153873,
+    0.000297,
+    -0.005848
+   ],
+   "rest_local_p": [
+    -2.741751,
+    9.546771,
+    0.36644
+   ],
+   "rest_world_p": [
+    6.439572,
+    11.646489,
+    -3.003519
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_index_finger_2",
+   "parent": 18,
+   "rest_local_q": [
+    0.984011,
+    0.17811,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.7,
+    0
+   ],
+   "rest_world_p": [
+    6.673739,
+    11.368001,
+    -3.070675
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_index_finger_3",
+   "parent": 19,
+   "rest_local_q": [
+    0.985846,
+    0.167655,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.85,
+    0
+   ],
+   "rest_world_p": [
+    6.771927,
+    11.101416,
+    -3.093405
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_index_finger_tip",
+   "parent": 20,
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.000377,
+    3e-05
+   ],
+   "rest_local_p": [
+    0,
+    2.774866,
+    0
+   ],
+   "rest_world_p": [
+    6.780971,
+    10.824167,
+    -3.086342
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "left_middle_finger_1",
+   "parent": 76,
+   "rest_local_q": [
+    0.986324,
+    0.164818,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -0.481925,
+    9.970863,
+    -0.151627
+   ],
+   "rest_world_p": [
+    6.430475,
+    11.659308,
+    -3.238686
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_middle_finger_2",
+   "parent": 22,
+   "rest_local_q": [
+    0.984378,
+    0.176069,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.7,
+    0
+   ],
+   "rest_world_p": [
+    6.660105,
+    11.375661,
+    -3.299629
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_middle_finger_3",
+   "parent": 23,
+   "rest_local_q": [
+    0.986526,
+    0.163604,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.95,
+    0
+   ],
+   "rest_world_p": [
+    6.757963,
+    11.098013,
+    -3.31862
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_middle_finger_tip",
+   "parent": 24,
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.001014,
+    0.000143
+   ],
+   "rest_local_p": [
+    0,
+    2.952863,
+    0
+   ],
+   "rest_world_p": [
+    6.765576,
+    10.803019,
+    -3.307926
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "left_ring_finger_1",
+   "parent": 77,
+   "rest_local_q": [
+    0.985145,
+    0.171337,
+    -0.011417,
+    0.001714
+   ],
+   "rest_local_p": [
+    1.383193,
+    9.54199,
+    -0.108566
+   ],
+   "rest_world_p": [
+    6.336302,
+    11.669883,
+    -3.405011
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_ring_finger_2",
+   "parent": 26,
+   "rest_local_q": [
+    0.984707,
+    0.174217,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.15,
+    0
+   ],
+   "rest_world_p": [
+    6.529479,
+    11.425866,
+    -3.453626
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_ring_finger_3",
+   "parent": 27,
+   "rest_local_q": [
+    0.986381,
+    0.164477,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    3e-06,
+    2.95,
+    1e-06
+   ],
+   "rest_world_p": [
+    6.626151,
+    11.147514,
+    -3.467753
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_ring_finger_tip",
+   "parent": 28,
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    0.000492,
+    -4e-05
+   ],
+   "rest_local_p": [
+    -2.3e-05,
+    2.644316,
+    -1e-06
+   ],
+   "rest_world_p": [
+    6.631733,
+    10.883589,
+    -3.452383
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "left_pinky_finger_1",
+   "parent": 78,
+   "rest_local_q": [
+    0.985934,
+    0.166306,
+    -0.013629,
+    0.009487
+   ],
+   "rest_local_p": [
+    3.324375,
+    8.515241,
+    0.335283
+   ],
+   "rest_world_p": [
+    6.171384,
+    11.676752,
+    -3.5565
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_pinky_finger_2",
+   "parent": 30,
+   "rest_local_q": [
+    0.984552,
+    0.175092,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    3.6,
+    0
+   ],
+   "rest_world_p": [
+    6.396573,
+    11.400558,
+    -3.607558
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_pinky_finger_3",
+   "parent": 31,
+   "rest_local_q": [
+    0.987291,
+    0.158924,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    2.1,
+    0
+   ],
+   "rest_world_p": [
+    6.467962,
+    11.203206,
+    -3.615024
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_pinky_finger_tip",
+   "parent": 32,
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.000812,
+    -0.000205
+   ],
+   "rest_local_p": [
+    0,
+    2.125531,
+    0
+   ],
+   "rest_world_p": [
+    6.477287,
+    10.991307,
+    -3.601217
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "right_clavicle",
+   "parent": 2,
+   "rest_local_q": [
+    0.706113,
+    0.706113,
+    -0.037484,
+    -0.037484
+   ],
+   "rest_local_p": [
+    -0.231957,
+    2.507008,
+    -0.026351
+   ],
+   "rest_world_p": [
+    -0.202624,
+    15.486,
+    0.357268
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_shoulder",
+   "parent": 34,
+   "rest_local_q": [
+    0.142068,
+    0.909894,
+    -0.362323,
+    0.143636
+   ],
+   "rest_local_p": [
+    -1.414633,
+    -0.525905,
+    0.5816
+   ],
+   "rest_world_p": [
+    -1.762226,
+    15.05744,
+    0.357908
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_elbow",
+   "parent": 35,
+   "rest_local_q": [
+    -0.00796,
+    -0.9323,
+    -0.361013,
+    -0.020555
+   ],
+   "rest_local_p": [
+    -2.863717,
+    -0.13885,
+    -0.011072
+   ],
+   "rest_world_p": [
+    -2.801836,
+    16.307114,
+    2.719645
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_wrist",
+   "parent": 36,
+   "rest_local_q": [
+    0.407297,
+    0.407297,
+    -0.578022,
+    0.578022
+   ],
+   "rest_local_p": [
+    -2.788771,
+    0.460185,
+    0.00484
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_thumb_1",
+   "parent": 79,
+   "rest_local_q": [
+    0.926522,
+    0.320792,
+    0.067293,
+    0.184718
+   ],
+   "rest_local_p": [
+    3.163623,
+    -2.903589,
+    -1.42458
+   ],
+   "rest_world_p": [
+    -1.099989,
+    17.196306,
+    5.265201
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_thumb_2",
+   "parent": 38,
+   "rest_local_q": [
+    0.966008,
+    -0.051549,
+    0.002419,
+    -0.253309
+   ],
+   "rest_local_p": [
+    1.1e-05,
+    -4.187064,
+    1.1e-05
+   ],
+   "rest_world_p": [
+    -0.850915,
+    17.204057,
+    5.601679
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_thumb_3",
+   "parent": 39,
+   "rest_local_q": [
+    0.970809,
+    -0.000179,
+    0.000723,
+    -0.239851
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.418415,
+    -4.4e-05
+   ],
+   "rest_world_p": [
+    -0.775986,
+    17.326488,
+    5.911924
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_thumb_tip",
+   "parent": 40,
+   "rest_local_q": [
+    0.991558,
+    0.005153,
+    0.122683,
+    0.041652
+   ],
+   "rest_local_p": [
+    -6e-06,
+    -2.5806,
+    -9e-06
+   ],
+   "rest_world_p": [
+    -0.834244,
+    17.460028,
+    6.124921
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "right_index_finger_1",
+   "parent": 80,
+   "rest_local_q": [
+    0.936029,
+    0.350247,
+    0.001741,
+    -0.034257
+   ],
+   "rest_local_p": [
+    2.741756,
+    -9.54673,
+    -0.366487
+   ],
+   "rest_world_p": [
+    -0.877902,
+    17.742905,
+    5.591077
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_index_finger_2",
+   "parent": 42,
+   "rest_local_q": [
+    0.875974,
+    0.482358,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.699972,
+    2e-05
+   ],
+   "rest_world_p": [
+    -0.776635,
+    17.784242,
+    5.944538
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_index_finger_3",
+   "parent": 43,
+   "rest_local_q": [
+    0.904517,
+    0.426437,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1.1e-05,
+    -2.850096,
+    3e-06
+   ],
+   "rest_world_p": [
+    -0.784612,
+    17.569253,
+    6.131478
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_index_finger_tip",
+   "parent": 44,
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    -0.000377,
+    3e-05
+   ],
+   "rest_local_p": [
+    5e-06,
+    -2.774783,
+    -1e-05
+   ],
+   "rest_world_p": [
+    -0.86267,
+    17.305612,
+    6.094132
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "right_middle_finger_1",
+   "parent": 81,
+   "rest_local_q": [
+    0.911643,
+    0.410982,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0.481923,
+    -9.970817,
+    0.151658
+   ],
+   "rest_world_p": [
+    -1.070273,
+    17.868015,
+    5.64486
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_middle_finger_2",
+   "parent": 46,
+   "rest_local_q": [
+    0.881823,
+    0.47158,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    1e-06,
+    -3.700081,
+    -6.5e-05
+   ],
+   "rest_world_p": [
+    -0.958514,
+    17.856529,
+    5.997399
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_middle_finger_3",
+   "parent": 47,
+   "rest_local_q": [
+    0.91461,
+    0.404338,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.949962,
+    -3e-06
+   ],
+   "rest_world_p": [
+    -0.974613,
+    17.615386,
+    6.166555
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_middle_finger_tip",
+   "parent": 48,
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.001014,
+    0.000143
+   ],
+   "rest_local_p": [
+    8e-06,
+    -2.952826,
+    2.5e-05
+   ],
+   "rest_world_p": [
+    -1.07273,
+    17.3419,
+    6.113923
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "right_ring_finger_1",
+   "parent": 82,
+   "rest_local_q": [
+    0.892606,
+    0.445846,
+    -0.066164,
+    0.00993
+   ],
+   "rest_local_p": [
+    -1.383193,
+    -9.541931,
+    0.108606
+   ],
+   "rest_world_p": [
+    -1.257898,
+    17.885633,
+    5.678492
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_ring_finger_2",
+   "parent": 50,
+   "rest_local_q": [
+    0.887019,
+    0.461734,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    2e-06,
+    -3.150082,
+    -8.4e-05
+   ],
+   "rest_world_p": [
+    -1.147489,
+    17.846663,
+    5.970933
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_ring_finger_3",
+   "parent": 51,
+   "rest_local_q": [
+    0.912483,
+    0.409116,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.949962,
+    -8e-06
+   ],
+   "rest_world_p": [
+    -1.134053,
+    17.588914,
+    6.113788
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_ring_finger_tip",
+   "parent": 52,
+   "rest_local_q": [
+    0.993611,
+    0.112856,
+    0.000492,
+    -4e-05
+   ],
+   "rest_local_p": [
+    2.2e-05,
+    -2.644361,
+    4.2e-05
+   ],
+   "rest_world_p": [
+    -1.204221,
+    17.344222,
+    6.042172
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "right_pinky_finger_1",
+   "parent": 83,
+   "rest_local_q": [
+    0.903238,
+    0.418157,
+    -0.079176,
+    0.055114
+   ],
+   "rest_local_p": [
+    -3.324374,
+    -8.51522,
+    -0.335253
+   ],
+   "rest_world_p": [
+    -1.474434,
+    17.83697,
+    5.709105
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_pinky_finger_2",
+   "parent": 54,
+   "rest_local_q": [
+    0.884579,
+    0.46639,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4e-06,
+    -3.599989,
+    -6.1e-05
+   ],
+   "rest_world_p": [
+    -1.313724,
+    17.805739,
+    6.029724
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_pinky_finger_3",
+   "parent": 55,
+   "rest_local_q": [
+    0.925592,
+    0.378523,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -4e-06,
+    -2.100059,
+    3.7e-05
+   ],
+   "rest_world_p": [
+    -1.292932,
+    17.625184,
+    6.134938
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_pinky_finger_tip",
+   "parent": 56,
+   "rest_local_q": [
+    0.993611,
+    0.112857,
+    -0.000812,
+    -0.000205
+   ],
+   "rest_local_p": [
+    -1e-06,
+    -2.125528,
+    1.4e-05
+   ],
+   "rest_world_p": [
+    -1.348404,
+    17.422783,
+    6.101242
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": false
+  },
+  {
+   "name": "left_hip",
+   "parent": 0,
+   "rest_local_q": [
+    0.701867,
+    -0.085926,
+    0.701867,
+    -0.085926
+   ],
+   "rest_local_p": [
+    1.166667,
+    0,
+    -0.891785
+   ],
+   "rest_world_p": [
+    1.166667,
+    9.586793,
+    0
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_knee",
+   "parent": 58,
+   "rest_local_q": [
+    0.990337,
+    0,
+    0,
+    0.138683
+   ],
+   "rest_local_p": [
+    4.330096,
+    -0.166667,
+    0
+   ],
+   "rest_world_p": [
+    1.166667,
+    5.424785,
+    1.206315
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_ankle",
+   "parent": 59,
+   "rest_local_q": [
+    0.99142,
+    -0.130716,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    4.394251,
+    0.142225,
+    0
+   ],
+   "rest_world_p": [
+    1.166667,
+    1.038092,
+    0.912053
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_toes",
+   "parent": 60,
+   "rest_local_q": [
+    0.5,
+    0.5,
+    -0.5,
+    0.5
+   ],
+   "rest_local_p": [
+    0.529113,
+    -0.985555,
+    -0.10466
+   ],
+   "rest_world_p": [
+    1.321027,
+    0.475404,
+    1.872152
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_big_toe",
+   "parent": 61,
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    -0.469529,
+    -0.066581,
+    0.603027
+   ],
+   "rest_world_p": [
+    1.023841,
+    0.384488,
+    2.573541
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_small_toe",
+   "parent": 61,
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    0.321466,
+    -0.061259,
+    0.480428
+   ],
+   "rest_world_p": [
+    1.756029,
+    0.401003,
+    2.250493
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "left_heel",
+   "parent": 60,
+   "rest_local_q": [
+    -0.125107,
+    0.94888,
+    0.037879,
+    -0.287298
+   ],
+   "rest_local_p": [
+    0.573324,
+    0.626491,
+    0.168124
+   ],
+   "rest_world_p": [
+    1.166667,
+    0.487567,
+    0.243937
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "joint7",
+   "parent": 64,
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    -2e-06,
+    0,
+    -3e-06
+   ],
+   "rest_world_p": [
+    1.16667,
+    0.487567,
+    0.243937
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_hip",
+   "parent": 0,
+   "rest_local_q": [
+    -0.194479,
+    0.667784,
+    -0.201823,
+    0.689572
+   ],
+   "rest_local_p": [
+    -1.16667,
+    0,
+    -0.891789
+   ],
+   "rest_world_p": [
+    -1.16667,
+    9.58679,
+    0
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_knee",
+   "parent": 66,
+   "rest_local_q": [
+    0.988321,
+    0,
+    0,
+    0.152388
+   ],
+   "rest_local_p": [
+    -4.33009,
+    0.166667,
+    0
+   ],
+   "rest_world_p": [
+    -1.026232,
+    5.849137,
+    -2.188078
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_ankle",
+   "parent": 67,
+   "rest_local_q": [
+    0.878735,
+    -0.267701,
+    -0.013248,
+    0.394951
+   ],
+   "rest_local_p": [
+    -4.394253,
+    -0.142226,
+    0
+   ],
+   "rest_world_p": [
+    -0.889563,
+    3.140334,
+    -5.648337
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_toes",
+   "parent": 68,
+   "rest_local_q": [
+    0.5,
+    0.5,
+    -0.5,
+    0.5
+   ],
+   "rest_local_p": [
+    -0.529114,
+    0.985552,
+    0.10466
+   ],
+   "rest_world_p": [
+    -1.13896,
+    2.285387,
+    -6.333242
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_big_toe",
+   "parent": 69,
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    0.469533,
+    0.066581,
+    -0.60303
+   ],
+   "rest_world_p": [
+    -0.992314,
+    1.541275,
+    -6.448709
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_small_toe",
+   "parent": 69,
+   "rest_local_q": [
+    0.70104,
+    0.70104,
+    -0.09243,
+    0.09243
+   ],
+   "rest_local_p": [
+    -0.321464,
+    0.061259,
+    -0.480427
+   ],
+   "rest_world_p": [
+    -1.623591,
+    2.027575,
+    -6.52447
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "right_heel",
+   "parent": 68,
+   "rest_local_q": [
+    -0.125107,
+    0.94888,
+    0.037879,
+    -0.287298
+   ],
+   "rest_local_p": [
+    -0.573324,
+    -0.626491,
+    -0.168124
+   ],
+   "rest_world_p": [
+    -0.633841,
+    3.825185,
+    -6.112063
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "joint7",
+   "parent": 72,
+   "rest_local_q": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "rest_local_p": [
+    0,
+    0,
+    0
+   ],
+   "rest_world_p": [
+    -0.633841,
+    3.825185,
+    -6.112063
+   ],
+   "scale": 1.0,
+   "is_group": false,
+   "solve": true
+  },
+  {
+   "name": "transform4",
+   "parent": 13,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.012878416845242475,
+    -0.7031051616526646
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    1.7763568394002505e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform5",
+   "parent": 13,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.012878416845242475,
+    -0.7031051616526646
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    1.7763568394002505e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform6",
+   "parent": 13,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.012878416845242475,
+    -0.7031051616526646
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    1.7763568394002505e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform7",
+   "parent": 13,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.012878416845242475,
+    -0.7031051616526646
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    1.7763568394002505e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform8",
+   "parent": 13,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.012878416845242475,
+    -0.7031051616526646
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    1.7763568394002505e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    5.589093,
+    12.159447,
+    -3.042034
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform9",
+   "parent": 37,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.01287841684524247,
+    -0.7031051616526645
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    -3.552713678800501e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform10",
+   "parent": 37,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.01287841684524247,
+    -0.7031051616526645
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    -3.552713678800501e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform11",
+   "parent": 37,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.01287841684524247,
+    -0.7031051616526645
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    -3.552713678800501e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform12",
+   "parent": 37,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.01287841684524247,
+    -0.7031051616526645
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    -3.552713678800501e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  },
+  {
+   "name": "transform13",
+   "parent": 37,
+   "rest_local_q": [
+    0.07511777291666527,
+    0.7069898147986158,
+    0.01287841684524247,
+    -0.7031051616526645
+   ],
+   "rest_local_p": [
+    4.440892098500626e-16,
+    -3.552713678800501e-15,
+    5.551115123125783e-17
+   ],
+   "rest_world_p": [
+    -1.512737,
+    17.172667,
+    5.081441
+   ],
+   "scale": 0.10000000000000002,
+   "is_group": true,
+   "solve": false
+  }
+ ]
+}
