@@ -170,17 +170,63 @@ def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
         "the fingers stopped solving when the spine fell back to v15"
 
 
-def test_the_three_sources_are_three_different_spines(monkeypatch):
+def test_real_total_moves_only_the_distribution_not_the_chest(monkeypatch):
+    """SPINE_SOURCE_REAL_TOTAL drives v15's 65/35 split from the model's real
+    pelvis->chest rotation instead of the landmark-inferred one -- and leaves
+    spine_2's WORLD anchor exactly where v15 put it.
+
+    Pinned because it is the reason that mapping cannot improve a
+    chest-vs-pelvis total, measured or otherwise: it redistributes bend
+    between the two bones and a redistribution cannot move the total. The
+    task-6b report leans on that being structural rather than a coincidence
+    of six captures, so it is asserted here rather than argued there."""
+    v15 = _world(_solve(DEV_ROW, None))
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REAL_TOTAL)
+    rt = _world(_solve(DEV_ROW, _rots(DEV_ROW)))
+    assert _quat_deg(v15[I["spine_2"]], rt[I["spine_2"]]) < 1e-6, \
+        "real_total moved the chest anchor -- it is only supposed to move spine_1"
+    moved = _quat_deg(v15[I["spine_1"]], rt[I["spine_1"]])
+    assert moved > 1.0, f"spine_1 moved only {moved:.4f} deg -- the real total did nothing"
+
+
+def test_rel_perjoint_carries_the_model_relative_to_our_own_pelvis(monkeypatch):
+    """The DEFAULT: each spine bone's world orientation is our solved
+    pelvis's delta composed with the model's ROOT-RELATIVE rotation.
+
+    Stated as the difference from SPINE_SOURCE_MHR, which is the whole
+    content of the change: the same row 37 reaches spine_2 both ways, and
+    the two differ by exactly D(pelvis) . Delta(root)^-1."""
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+    rots = _rots(DEV_ROW)
+
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
+    absolute = _world(_solve(DEV_ROW, rots))
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
+    L = _solve(DEV_ROW, rots)
+    relative = _world(L)
+
+    carry = QM.multiply(
+        QM.multiply(L[I["pelvis"]], QM.conjugate(Wr[I["pelvis"]])),
+        QM.conjugate(PG._mhr_delta_q(rots, 1)))
+    want = QM.multiply(carry, absolute[I["spine_2"]])
+    assert _quat_deg(relative[I["spine_2"]], want) < 1e-6, \
+        "spine_2 is not the absolute transfer carried by D(pelvis) . Delta(root)^-1"
+    # Positive control: the carry is a real rotation on this row, so the
+    # assertion above is not satisfied by carry == identity.
+    assert _quat_deg(carry, np.array([1.0, 0.0, 0.0, 0.0])) > 5.0
+
+
+def test_every_source_is_a_different_spine(monkeypatch):
     """Positive control for every monkeypatch above: the switch actually
     switches. Each pair of mappings must put spine_1 somewhere visibly
     different on a real row -- otherwise the tests above could all be
     passing against one unchanged code path."""
     got = {}
-    for src in (PG.SPINE_SOURCE_MHR, PG.SPINE_SOURCE_HYBRID, PG.SPINE_SOURCE_V15):
+    for src in sorted(PG._SPINE_SOURCES):
         monkeypatch.setattr(PG, "SPINE_SOURCE", src)
         got[src] = _world(_solve(DEV_ROW, _rots(DEV_ROW)))[I["spine_1"]]
     pairs = [(a, b) for a in got for b in got if a < b]
-    assert len(pairs) == 3                                        # positive control
+    assert len(pairs) == 10                                       # positive control
     for a, b in pairs:
         d = _quat_deg(got[a], got[b])
         assert d > 1.0, f"{a} and {b} put spine_1 {d:.4f} deg apart -- not distinct"
