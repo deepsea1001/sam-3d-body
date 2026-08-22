@@ -232,9 +232,23 @@ def test_global_arch_transfers_to_spine():
     The strongest check available here: it separates a correct transfer from
     a plausible-looking wrong one (a conjugated delta, a reversed multiply
     order, or a spurious frame conversion all move the spine somewhere
-    believable, but none of them reproduce G)."""
+    believable, but none of them reproduce G).
+
+    G's AXIS is load-bearing, and is deliberately not a coordinate axis.
+    `diag(1,-1,-1)` -- the camera flip that must never be applied to
+    rotations here -- has det +1: it IS a 180 deg rotation about X, so it
+    COMMUTES with every rotation about X. An arch about +X therefore passes
+    unchanged against a Delta wrongly conjugated by that flip (measured:
+    0.0000 deg deviation), leaving this test blind to precisely the error
+    class it exists to catch. A normalised [1,2,3] tilt is symmetric under
+    NONE of the 23 non-identity signed coordinate-axis maps -- worst case
+    16.25 deg, and 48.15 deg for `diag(1,-1,-1)` itself -- so any of them
+    lands far outside the 0.5 deg tolerance below. Do not "simplify" this
+    back to a coordinate axis: each of the three is blind to 3 of the 23."""
     t = np.radians(25.0)
-    qG = np.array([np.cos(t / 2), np.sin(t / 2), 0.0, 0.0])   # 25 deg about +X, [w,x,y,z]
+    ax = np.array([1.0, 2.0, 3.0])
+    ax = ax / np.linalg.norm(ax)
+    qG = np.array([np.cos(t / 2), *(np.sin(t / 2) * ax)])   # 25 deg about [1,2,3], [w,x,y,z]
     G = _wxyz_to_mat(qG)
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
 
@@ -315,22 +329,45 @@ def test_real_row_spine_directions_meet_anchored_floor():
     assert not failures, "\n".join(failures)
 
 
+# Every solved bone whose LOCAL legitimately differs between the two spine
+# branches. The two spine bones are the intended change; the other four
+# follow from the rig's parent chain, not from any extra reach:
+# left_clavicle, right_clavicle and neck are all children of spine_2, so
+# their locals absorb its new world frame, and head's local absorbs neck's
+# (head's own WORLD anchor, from the nose + eye line, is untouched).
+_V16_AFFECTED = ("spine_1", "spine_2", "neck", "head",
+                 "left_clavicle", "right_clavicle")
+
+
 def test_fallback_none_switches_only_the_spine_branch():
-    """`mhr_rots=None` really takes the v15 branch, and the v16 branch really
-    touches nothing but the spine.
+    """`mhr_rots=None` really takes the v15 branch, and the switch reaches
+    exactly the spine and its descendants -- nothing else.
 
     v15's own behavior is pinned by the 44 pre-existing tests, every one of
     which calls the solver without `mhr_rots` -- so what is left to prove
-    here is that the branch switches at all, and that it switches narrowly."""
+    here is that the branch switches at all, and that it does not leak.
+
+    Deliberately NOT the claim that only spine_1 and spine_2 move: a bone's
+    local is expressed in its parent's world frame, so spine_2's four
+    descendants (`_V16_AFFECTED` above) must change with it, and a test
+    demanding otherwise would be demanding a bug. The exact set is asserted
+    rather than sampled, so a future edit that reaches one bone further
+    fails here instead of passing quietly."""
     targets = rig_targets_from_mhr70(_kp(DEV_ROW))
     v15 = solve_rig_locals(RIG, targets)                          # untouched call site
     v16 = solve_rig_locals(RIG, targets, mhr_rots=_rots(DEV_ROW))
+    assert set(v15) == set(v16), "the branch changed WHICH bones are solved"
+
     for name in ("spine_1", "spine_2"):
         moved = _quat_deg(v15[I[name]], v16[I[name]])
         assert moved > 1.0, f"{name} moved only {moved:.4f} deg -- the branch did not switch"
-    for name in ("left_knee", "left_elbow"):
-        assert np.allclose(v15[I[name]], v16[I[name]], atol=1e-9), \
-            f"{name} changed, but only the spine should have"
+
+    # Index-keyed, never name-keyed: two rig bones share the name "joint7".
+    expected = {I[n] for n in _V16_AFFECTED}
+    changed = {i for i in v15 if not np.allclose(v15[i], v16[i], atol=1e-9)}
+    assert changed == expected, (
+        f"unexpected: {sorted(RIG.name[i] for i in changed - expected)}, "
+        f"missing: {sorted(RIG.name[i] for i in expected - changed)}")
 
 
 def test_version_pinned_16():
