@@ -606,13 +606,24 @@ def test_the_four_mappings_are_not_the_same_measurement(monkeypatch):
 
 
 # Every solved bone whose LOCAL legitimately differs between the two spine
-# branches. The two spine bones are the intended change; the other four
-# follow from the rig's parent chain, not from any extra reach:
+# branches. The two spine bones are the intended change; the rest follow
+# from the rig's parent chain, not from any extra reach:
 # left_clavicle, right_clavicle and neck are all children of spine_2, so
 # their locals absorb its new world frame, and head's local absorbs neck's
 # (head's own WORLD anchor, from the nose + eye line, is untouched).
+#
+# The two SHOULDERS joined this list when `_aim_delta` landed (2026-08-22).
+# Before it, the clavicle's world delta was the world-minimal rotation onto
+# the shoulder target and so did not depend on the spine AT ALL -- the
+# clavicle's local absorbed the whole difference and the chain went quiet
+# there. A roll-free local puts that roll in the clavicle's WORLD delta
+# instead, which the shoulder's local is then expressed against. It is a
+# re-parameterisation and the test asserts it as one: measured on the dev
+# row, the shoulder LOCALS move 0.32 and 15.50 deg while their WORLD
+# orientations move 2e-14 deg, and the elbows and wrists do not move at all.
 _V16_AFFECTED = ("spine_1", "spine_2", "neck", "head",
-                 "left_clavicle", "right_clavicle")
+                 "left_clavicle", "right_clavicle",
+                 "left_shoulder", "right_shoulder")
 
 
 def test_fallback_none_switches_only_the_spine_branch():
@@ -658,6 +669,17 @@ def test_fallback_none_switches_only_the_spine_branch():
     assert changed == expected, (
         f"unexpected: {sorted(RIG.name[i] for i in changed - expected)}, "
         f"missing: {sorted(RIG.name[i] for i in expected - changed)}")
+
+    # The shoulders are on that list as a re-parameterisation (see
+    # _V16_AFFECTED): their locals move because the clavicle's world frame
+    # moved under them, and their own WORLD orientation must not budge --
+    # it comes from the arm keypoints, which no spine branch touches.
+    W15 = fk_world_orientations(RIG, {**RIG.rest_local_q, **v15})
+    W16 = fk_world_orientations(RIG, {**RIG.rest_local_q, **v16})
+    for name in ("left_shoulder", "right_shoulder"):
+        assert _quat_deg(v15[I[name]], v16[I[name]]) > 1e-6      # positive control
+        spun = _quat_deg(W15[I[name]], W16[I[name]])
+        assert spun < 1e-6, f"{name}'s WORLD orientation moved {spun:.3e} deg"
 
 
 def test_version_pinned_16():

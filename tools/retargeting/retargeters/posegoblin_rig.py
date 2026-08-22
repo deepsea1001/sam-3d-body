@@ -551,6 +551,85 @@ def _pair_delta(a1, a2, b1, b2):
     return QuaternionMath.from_matrix(out[1] @ out[0].T)
 
 
+def _min_swing_q(a, b):
+    """Minimal rotation taking unit-ish *a* onto *b*, EXACTLY.
+
+    QuaternionMath.from_two_vectors returns the identity whenever the two
+    vectors are within acos(0.9999) = 0.81 deg of each other. That shortcut
+    is harmless where the rotation is large and pays for itself where the
+    cross product is degenerate -- but `_aim_delta` composes its swing on
+    top of the PARENT's delta, so the swing it needs is usually the SMALL
+    residual, and dropping it silently loses the whole aim. Measured over
+    1200 clavicle aims on the motion corpus: the shortcut fires on 6 and
+    costs up to 0.74 deg of aim error, which is 0.02 rig units at the
+    shoulder. The general branch of from_two_vectors -- w = 1 + dot, xyz =
+    cross -- is well conditioned all the way down to dot = 1 (it tends to
+    the identity smoothly), so it is used unconditionally here; only the
+    genuinely singular anti-parallel case still needs its own branch.
+    """
+    a = np.asarray(a, float)
+    b = np.asarray(b, float)
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na < 1e-9 or nb < 1e-9:
+        return QuaternionMath.identity()
+    a, b = a / na, b / nb
+    d = float(np.dot(a, b))
+    if d < -0.9999:
+        perp = np.array([1.0, 0.0, 0.0]) if abs(a[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        axis = np.cross(a, perp)
+        axis = axis / np.linalg.norm(axis)
+        return np.array([0.0, axis[0], axis[1], axis[2]])
+    q = np.array([1.0 + d, *np.cross(a, b)])
+    return q / np.linalg.norm(q)
+
+
+def _aim_delta(rest_dir, target_dir, d_parent):
+    """World delta aiming *rest_dir* at *target_dir* with NO roll about that
+    axis in the bone's LOCAL rotation.
+
+    The single-child case. One direction pair leaves rotation about the aim
+    axis unconstrained -- moving a bone about the very axis that points at
+    its child leaves the child exactly where it was -- so no reading of the
+    data prefers any value, and the only question left is which value is
+    least harmful. That is a question about the LOCAL: the local is what the
+    rig's joint limits constrain and what PoseGoblin's IK reads.
+
+    The minimal WORLD rotation (`from_two_vectors(rest_dir, target_dir)`,
+    what this branch used through v16) answers it badly. Being roll-free in
+    WORLD means the local -- `Wr(b)^-1 (D(p)^-1 D(b)) Wr(b)`, see
+    solve_rig_locals -- must roll BACK by whatever roll the PARENT carries
+    about this axis. An unobservable degree of freedom then ends up fixed
+    entirely by a bone the aim has nothing to do with.
+
+    Measured on Scott's arms-overhead capture pair (2026-08-22; poseforge3d
+    `captures/capture-07299b5a…-25.json`, the solver's own output, against
+    `-26.json`, his hand correction): D(spine_2) is 163.9 deg and carries
+    130.6 / 119.0 deg of roll about the left / right clavicle's long axis,
+    and the clavicle LOCALS come out at 100.9 / 135.2 deg of almost pure
+    roll where Scott poses 6.1 / 4.1 -- while the two poses agree about
+    where the arm goes to within 5.6 / 13.1 deg. His IK then drives the
+    clavicle into its joint limits and throws the arm behind the body.
+
+    Composing the swing ON TOP of the parent's delta makes the LOCAL
+    roll-free instead: with D'(b) = swing(D(p).rest_dir -> target_dir) .
+    D(p), the relative rotation D(p)^-1 D'(b) is the minimal rotation taking
+    rest_dir to D(p)^-1 target_dir -- axis perpendicular to rest_dir by
+    construction, hence zero twist about it. Nothing else moves: the aim is
+    exact (D'(b).rest_dir == target_dir), and the two deltas differ only by
+    a rotation about rest_dir, which is the direction of the child's own
+    rest offset, so every world POSITION below the bone is unchanged.
+
+    *d_parent* None (a root, or a parent the caller holds no delta for)
+    falls back to the world-minimal rotation: with no parent frame there is
+    nothing to be roll-free relative TO.
+    """
+    if d_parent is None:
+        return _min_swing_q(rest_dir, target_dir)
+    swing = _min_swing_q(QuaternionMath.rotate_vector(d_parent, rest_dir),
+                         target_dir)
+    return QuaternionMath.multiply(swing, d_parent)
+
+
 _ANKLE_FOOT = {
     "left_ankle": ("left_heel", "left_big_toe", "left_small_toe"),
     "right_ankle": ("right_heel", "right_big_toe", "right_small_toe"),
@@ -1309,10 +1388,12 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
 
     Per bone, a world DELTA D(b) rotates the rig's rest bone directions onto
     the target directions: all-children Kabsch for >=2 usable children,
-    minimal rotation for exactly 1 (a single pair leaves twist unconstrained;
-    an SVD there would invent one), parent's delta when the bone or its
-    children have no targets. The consumer REPLACES locals, and most rig rest
-    locals are non-identity, so deltas are composed with the rest:
+    `_aim_delta` for exactly 1 (a single pair leaves twist unconstrained; an
+    SVD there would invent one, and so -- less obviously -- does a minimal
+    WORLD rotation, whose local then carries the PARENT's roll about the aim
+    axis; see there), parent's delta when the bone or its children have no
+    targets. The consumer REPLACES locals, and most rig rest locals are
+    non-identity, so deltas are composed with the rest:
 
         L(b) = (D(p) * Wr(p))^-1 * D(b) * Wr(b)      (root: D * Wr)
 
@@ -1382,7 +1463,8 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
             D[n] = _kabsch_q(np.array([x[0] for x in pairs]),
                              np.array([x[1] for x in pairs]))
         elif len(pairs) == 1:
-            D[n] = QuaternionMath.from_two_vectors(pairs[0][0], pairs[0][1])
+            D[n] = _aim_delta(pairs[0][0], pairs[0][1],
+                              D[p] if p is not None and p in D else None)
         else:
             D[n] = D[p] if p is not None else QuaternionMath.identity()
 
