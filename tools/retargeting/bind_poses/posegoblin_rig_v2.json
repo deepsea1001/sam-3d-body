@@ -4,7 +4,8 @@
   "captured": "2026-08-22",
   "source": "posegoblin_rig_v1.json (34 body bones) + capture-rigbase2-11.json (40 finger/thumb bones, R14) + capture-rigprobe-09.json + capture-rigrestprobe-10.json (topology and the ten group constants)",
   "note": "v1's 74 bones at the same indices, plus ten Group nodes (transform4..13, indices 74..83) appended: the constant wrist-side containers the ten *_thumb_1/*_finger_1 chains actually hang off on the live rig (fixed rotation + 0.1 uniform scale). Their `parent` flips from null to their group's index; the 30 finger phalanges (_1,_2,_3) flip solve:false -> true (tips stay false). Built by tools_build_rig_v2.py, which re-runs and prints the reproduction-gate numbers on every rebuild.",
-  "finger_rest_note": "R14 (2026-08-22): the 40 finger/thumb bones' rest_local_q comes from capture-rigbase2-11.json -- the rig reset to its TRUE base pose -- NOT from v1. v1's finger rest descends from capture-rigrest-02.json, which was captured with the RIGHT hand curled into a partial fist: 33.87 deg mean / 44.72 deg max from base on all 15 right phalanges, against 5.72 / 7.56 on the left. Harmless while nothing posed the fingers; v16 task 5 applies rest_local o R(axis, angle), so a posed rest over-curls every right hand by that amount. In the base pose the two hands carry the SAME local quaternion on all 20 bones per side to 1.79e-4 deg. Those 40 bones' rest_world_p is recomputed here by scale-aware FK (the _1 bones do not move; _2/_3/_tip do). The 34 BODY bones keep v1's values verbatim -- the base probe's body is at whatever pose the live app was showing and must not be read for anything but the hands. posegoblin_rig_v1.json is untouched and remains the historical asset."
+  "finger_rest_note": "R14 (2026-08-22): the 40 finger/thumb bones' rest_local_q comes from capture-rigbase2-11.json -- the rig reset to its TRUE base pose -- NOT from v1. v1's finger rest descends from capture-rigrest-02.json, which was captured with the RIGHT hand curled into a partial fist: 33.87 deg mean / 44.72 deg max from base on all 15 right phalanges, against 5.72 / 7.56 on the left. Harmless while nothing posed the fingers; v16 task 5 applies rest_local o R(axis, angle), so a posed rest over-curls every right hand by that amount. In the base pose the two hands carry the SAME local quaternion on all 20 bones per side to 1.79e-4 deg. Those 40 bones' rest_world_p is recomputed here by scale-aware FK (the _1 bones do not move; _2/_3/_tip do). The other 32 BODY bones keep v1's values verbatim -- the base probe's body is at whatever pose the live app was showing and must not be read for anything but the hands and the two clavicles (see clavicle_rest_note). posegoblin_rig_v1.json is untouched and remains the historical asset.",
+  "clavicle_rest_note": "R15 (2026-08-22): the two clavicles' rest_local_q also comes from capture-rigbase2-11.json. v1's LEFT clavicle already equals the base probe's to v1's own rounding; its RIGHT is 6.077 deg off -- Scott's incidental posing recorded as rest, the same defect R14 removed from the right hand. Reading the probe's BODY is otherwise forbidden above, so this exception is earned STRUCTURALLY rather than by trusting it: the two clavicle bone offsets are exact negatives of each other, which forces their rest frames to differ by 180 deg about X, and the probe's pair satisfies that exactly ([0.707107, -0.707107, 0, 0] and [0.707107, +0.707107, 0, 0], mirror deviation 0.0 deg) while v1's does not. A posed capture cannot land on that by luck. It matters because the solver emits `rest_local . delta`: a rest frame 6 deg off the app's own splits a symmetric clavicle rotation asymmetrically between elevation and protraction, which Scott reported as a dislocated-looking right shoulder ball. right_shoulder/right_elbow/right_wrist rest_world_p are recomputed by FK to follow (the clavicle's own does not move; its rotation cannot move it), the right hand's twenty bones follow on the R14 path, and the five right-hand groups inherit right_wrist's value. CAVEAT, measured and deliberately not acted on here: v1's body rest descends from capture-rigrest-02.json, which is a POSED capture -- 43 of its 73 bones differ from the base probe, up to 105.9 deg at right_shoulder. R14 migrated the hands, R15 the clavicles; the rest of the body is still v1's A-pose and is what the solver solves against."
  },
  "bones": [
   {
@@ -241,8 +242,8 @@
    "name": "left_clavicle",
    "parent": 2,
    "rest_local_q": [
-    0.707107,
-    -0.707107,
+    0.7071067811865476,
+    -0.7071067811865475,
     0,
     0
    ],
@@ -344,9 +345,9 @@
     1.424599
    ],
    "rest_world_p": [
-    5.855571,
-    11.900999,
-    -2.783391
+    5.85557,
+    11.901002,
+    -2.783393
    ],
    "scale": 1.0,
    "is_group": false,
@@ -367,9 +368,9 @@
     0
    ],
    "rest_world_p": [
-    6.088307,
-    11.582781,
-    -2.642363
+    6.088306,
+    11.582784,
+    -2.642365
    ],
    "scale": 1.0,
    "is_group": false,
@@ -391,8 +392,8 @@
    ],
    "rest_world_p": [
     6.254087,
-    11.284485,
-    -2.662116
+    11.284488,
+    -2.662118
    ],
    "scale": 1.0,
    "is_group": false,
@@ -413,9 +414,9 @@
     0
    ],
    "rest_world_p": [
-    6.379237,
-    11.059298,
-    -2.677029
+    6.379236,
+    11.059301,
+    -2.677031
    ],
    "scale": 1.0,
    "is_group": false,
@@ -436,9 +437,9 @@
     0.36644
    ],
    "rest_world_p": [
-    6.439576,
-    11.646479,
-    -3.003504
+    6.439575,
+    11.646482,
+    -3.003506
    ],
    "scale": 1.0,
    "is_group": false,
@@ -459,9 +460,9 @@
     0
    ],
    "rest_world_p": [
-    6.695945,
-    11.389227,
-    -3.074187
+    6.695944,
+    11.38923,
+    -3.074189
    ],
    "scale": 1.0,
    "is_group": false,
@@ -483,8 +484,8 @@
    ],
    "rest_world_p": [
     6.846622,
-    11.15026,
-    -3.111822
+    11.150264,
+    -3.111824
    ],
    "scale": 1.0,
    "is_group": false,
@@ -505,9 +506,9 @@
     0
    ],
    "rest_world_p": [
-    6.940291,
-    10.88971,
-    -3.130231
+    6.94029,
+    10.889714,
+    -3.130233
    ],
    "scale": 1.0,
    "is_group": false,
@@ -529,8 +530,8 @@
    ],
    "rest_world_p": [
     6.430479,
-    11.659298,
-    -3.238672
+    11.659301,
+    -3.238673
    ],
    "scale": 1.0,
    "is_group": false,
@@ -551,9 +552,9 @@
     0
    ],
    "rest_world_p": [
-    6.686848,
-    11.402045,
-    -3.309355
+    6.686847,
+    11.402048,
+    -3.309357
    ],
    "scale": 1.0,
    "is_group": false,
@@ -574,9 +575,9 @@
     0
    ],
    "rest_world_p": [
-    6.842812,
-    11.154694,
-    -3.348311
+    6.842811,
+    11.154697,
+    -3.348312
    ],
    "scale": 1.0,
    "is_group": false,
@@ -597,9 +598,9 @@
     0
    ],
    "rest_world_p": [
-    6.942489,
-    10.877431,
-    -3.367901
+    6.942488,
+    10.877434,
+    -3.367903
    ],
    "scale": 1.0,
    "is_group": false,
@@ -621,8 +622,8 @@
    ],
    "rest_world_p": [
     6.336306,
-    11.669872,
-    -3.404998
+    11.669876,
+    -3.404999
    ],
    "scale": 1.0,
    "is_group": false,
@@ -643,9 +644,9 @@
     0
    ],
    "rest_world_p": [
-    6.554567,
-    11.45086,
-    -3.465174
+    6.554566,
+    11.450864,
+    -3.465175
    ],
    "scale": 1.0,
    "is_group": false,
@@ -666,9 +667,9 @@
     1e-06
    ],
    "rest_world_p": [
-    6.710531,
-    11.203509,
-    -3.50413
+    6.71053,
+    11.203512,
+    -3.504131
    ],
    "scale": 1.0,
    "is_group": false,
@@ -689,9 +690,9 @@
     -1e-06
    ],
    "rest_world_p": [
-    6.799793,
-    10.955217,
-    -3.521671
+    6.799792,
+    10.955221,
+    -3.521673
    ],
    "scale": 1.0,
    "is_group": false,
@@ -713,8 +714,8 @@
    ],
    "rest_world_p": [
     6.171388,
-    11.676741,
-    -3.556488
+    11.676744,
+    -3.556489
    ],
    "scale": 1.0,
    "is_group": false,
@@ -736,8 +737,8 @@
    ],
    "rest_world_p": [
     6.420828,
-    11.426441,
-    -3.62526
+    11.426445,
+    -3.625262
    ],
    "scale": 1.0,
    "is_group": false,
@@ -758,9 +759,9 @@
     0
    ],
    "rest_world_p": [
-    6.531854,
-    11.250361,
-    -3.652991
+    6.531853,
+    11.250364,
+    -3.652993
    ],
    "scale": 1.0,
    "is_group": false,
@@ -781,9 +782,9 @@
     0
    ],
    "rest_world_p": [
-    6.603603,
-    11.050781,
-    -3.667093
+    6.603602,
+    11.050785,
+    -3.667095
    ],
    "scale": 1.0,
    "is_group": false,
@@ -793,10 +794,10 @@
    "name": "right_clavicle",
    "parent": 2,
    "rest_local_q": [
-    0.706113,
-    0.706113,
-    -0.037484,
-    -0.037484
+    0.7071067811865475,
+    0.7071067811865476,
+    0,
+    0
    ],
    "rest_local_p": [
     -0.231957,
@@ -827,9 +828,9 @@
     0.5816
    ],
    "rest_world_p": [
-    -1.762226,
-    15.05744,
-    0.357908
+    -1.711749,
+    14.904402,
+    0.339799
    ],
    "scale": 1.0,
    "is_group": false,
@@ -850,9 +851,9 @@
     -0.011072
    ],
    "rest_world_p": [
-    -2.801836,
-    16.307114,
-    2.719645
+    -2.866504,
+    15.959037,
+    2.742832
    ],
    "scale": 1.0,
    "is_group": false,
@@ -873,9 +874,9 @@
     0.00484
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 1.0,
    "is_group": false,
@@ -896,9 +897,9 @@
     -1.42458
    ],
    "rest_world_p": [
-    -1.099994,
-    17.196311,
-    5.265199
+    -1.257206,
+    16.921857,
+    5.321575
    ],
    "scale": 1.0,
    "is_group": false,
@@ -919,9 +920,9 @@
     1.1e-05
    ],
    "rest_world_p": [
-    -0.786582,
-    17.246179,
-    5.538332
+    -0.949836,
+    16.992917,
+    5.596874
    ],
    "scale": 1.0,
    "is_group": false,
@@ -942,9 +943,9 @@
     -4.4e-05
    ],
    "rest_world_p": [
-    -0.642513,
-    17.334458,
-    5.835496
+    -0.814751,
+    17.084436,
+    5.89726
    ],
    "scale": 1.0,
    "is_group": false,
@@ -965,9 +966,9 @@
     -9e-06
    ],
    "rest_world_p": [
-    -0.533754,
-    17.401103,
-    6.059829
+    -0.712775,
+    17.153528,
+    6.124025
    ],
    "scale": 1.0,
    "is_group": false,
@@ -988,9 +989,9 @@
     -0.366487
    ],
    "rest_world_p": [
-    -0.877909,
-    17.742912,
-    5.591075
+    -1.090117,
+    17.475871,
+    5.667174
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1011,9 +1012,9 @@
     2e-05
    ],
    "rest_world_p": [
-    -0.729483,
-    17.940671,
-    5.866319
+    -0.961646,
+    17.677474,
+    5.949574
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1034,9 +1035,9 @@
     3e-06
    ],
    "rest_world_p": [
-    -0.620726,
-    18.037949,
-    6.111144
+    -0.862689,
+    17.776293,
+    6.197913
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1057,9 +1058,9 @@
     -1e-05
    ],
    "rest_world_p": [
-    -0.525665,
-    18.074229,
-    6.369295
+    -0.771255,
+    17.812616,
+    6.457365
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1080,9 +1081,9 @@
     0.151658
    ],
    "rest_world_p": [
-    -1.07028,
-    17.868022,
-    5.644858
+    -1.293902,
+    17.579185,
+    5.72505
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1103,9 +1104,9 @@
     -6.5e-05
    ],
    "rest_world_p": [
-    -0.92185,
-    18.06578,
-    5.920115
+    -1.165428,
+    17.780786,
+    6.007463
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1126,9 +1127,9 @@
     -3e-06
    ],
    "rest_world_p": [
-    -0.809283,
-    18.166466,
-    6.173519
+    -1.063002,
+    17.883067,
+    6.264505
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1149,9 +1150,9 @@
     2.5e-05
    ],
    "rest_world_p": [
-    -0.708121,
-    18.205076,
-    6.448233
+    -0.965702,
+    17.921723,
+    6.540603
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1172,9 +1173,9 @@
     0.108606
    ],
    "rest_world_p": [
-    -1.257905,
-    17.88564,
-    5.67849
+    -1.482288,
+    17.576804,
+    5.758956
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1195,9 +1196,9 @@
     -8.4e-05
    ],
    "rest_world_p": [
-    -1.131538,
-    18.054001,
-    5.912833
+    -1.372911,
+    17.748436,
+    5.999391
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1218,9 +1219,9 @@
     -8e-06
    ],
    "rest_world_p": [
-    -1.01897,
-    18.154686,
-    6.166237
+    -1.270485,
+    17.850717,
+    6.256432
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1241,9 +1242,9 @@
     4.2e-05
    ],
    "rest_world_p": [
-    -0.928375,
-    18.189265,
-    6.412252
+    -1.183347,
+    17.885337,
+    6.503687
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1264,9 +1265,9 @@
     -0.335253
    ],
    "rest_world_p": [
-    -1.474441,
-    17.836976,
-    5.709103
+    -1.692842,
+    17.50574,
+    5.787423
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1287,9 +1288,9 @@
     -6.1e-05
    ],
    "rest_world_p": [
-    -1.330026,
-    18.029386,
-    5.976914
+    -1.567842,
+    17.701888,
+    6.062196
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1310,9 +1311,9 @@
     3.7e-05
    ],
    "rest_world_p": [
-    -1.249889,
-    18.101067,
-    6.157309
+    -1.494926,
+    17.774705,
+    6.245181
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1333,9 +1334,9 @@
     1.4e-05
    ],
    "rest_world_p": [
-    -1.177071,
-    18.12886,
-    6.355056
+    -1.424888,
+    17.802531,
+    6.443925
    ],
    "scale": 1.0,
    "is_group": false,
@@ -1839,9 +1840,9 @@
     5.551115123125783e-17
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 0.10000000000000002,
    "is_group": true,
@@ -1862,9 +1863,9 @@
     5.551115123125783e-17
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 0.10000000000000002,
    "is_group": true,
@@ -1885,9 +1886,9 @@
     5.551115123125783e-17
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 0.10000000000000002,
    "is_group": true,
@@ -1908,9 +1909,9 @@
     5.551115123125783e-17
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 0.10000000000000002,
    "is_group": true,
@@ -1931,9 +1932,9 @@
     5.551115123125783e-17
    ],
    "rest_world_p": [
-    -1.512737,
-    17.172667,
-    5.081441
+    -1.66587,
+    16.863785,
+    5.136351
    ],
    "scale": 0.10000000000000002,
    "is_group": true,

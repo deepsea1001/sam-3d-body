@@ -30,9 +30,24 @@ BP = Path(__file__).resolve().parent.parent / "bind_poses"
 V2 = BP / "posegoblin_rig_v2.json"
 PROBES = [BP / "capture-rigprobe-09.json", BP / "capture-rigrestprobe-10.json"]
 # R14: the rig reset to its TRUE base pose -- the source of the 40 finger/thumb
-# bones' rest, and of nothing else (its BODY is at whatever pose the live app was
-# showing; right_shoulder alone reads 105.9 deg from v1's rest).
+# bones' rest and, since R15, the two clavicles'. Its BODY is otherwise at
+# whatever pose the live app was showing (right_shoulder alone reads 105.9 deg
+# from v1's rest), so nothing else may be read off it.
 BASE_PROBE = BP / "capture-rigbase2-11.json"
+
+# R15 (2026-08-22): v1's RIGHT clavicle rest is 6.077 deg off the app's base
+# pose -- Scott's incidental posing recorded as rest, the same defect R14
+# removed from the right hand. The exception to "read only the hands off the
+# base probe" is earned STRUCTURALLY, and this file asserts that structure
+# rather than taking the probe's word: the two clavicle bone offsets are exact
+# negatives, which forces their rest frames to differ by 180 deg about X, and
+# the probe's pair satisfies it exactly while v1's does not.
+CLAVICLE_BONE_NAMES = ["left_clavicle", "right_clavicle"]
+# ...and everything hanging off the corrected clavicle has to follow. The
+# clavicle's OWN world position cannot move (its own rotation does not place
+# it); right_shoulder/elbow/wrist do, and the right hand's twenty bones were
+# already on the FK branch for R14.
+CLAVICLE_DEPENDENT_NAMES = ["right_shoulder", "right_elbow", "right_wrist"]
 
 # The 40 finger/thumb bones (3 phalanges + tip on each of five digits, per side).
 FINGER_BONE_NAMES = [f"{side}_{stem}_{k}"
@@ -51,13 +66,17 @@ def _mat_local(pos, quat_xyzw, scale):
     return M
 
 
-def _base_probe_finger_locals():
-    """{finger bone name -> rest_local_q [w,x,y,z]} straight from the base-pose
-    probe. The probe is a raw three.js dump ([x,y,z,w]); the asset is [w,x,y,z].
+def _base_probe_locals(names=None):
+    """{bone name -> rest_local_q [w,x,y,z]} straight from the base-pose probe,
+    for the bones the asset is allowed to read off it: the 40 finger/thumb
+    bones (R14) plus the two clavicles (R15). The probe is a raw three.js dump
+    ([x,y,z,w]); the asset is [w,x,y,z].
 
     Ambiguous names are skipped ("joint7" names two unrelated bones), then every
-    one of the 40 is asserted present -- a silently short dict here would turn
-    every caller's finger branch into a body branch and prove nothing."""
+    expected bone is asserted present -- a silently short dict here would turn
+    every caller's base-probe branch into a v1-verbatim branch and prove
+    nothing."""
+    want = list(FINGER_BONE_NAMES) + CLAVICLE_BONE_NAMES if names is None else list(names)
     nodes = json.loads(BASE_PROBE.read_text())["nodes"]
     counts = {}
     for n in nodes:
@@ -65,12 +84,15 @@ def _base_probe_finger_locals():
             counts[n["name"]] = counts.get(n["name"], 0) + 1
     out = {}
     for n in nodes:
-        if n["type"] == "Bone" and counts[n["name"]] == 1 and n["name"] in FINGER_BONE_NAMES:
+        if n["type"] == "Bone" and counts[n["name"]] == 1 and n["name"] in want:
             x, y, z, w = n["quat"]
             out[n["name"]] = [w, x, y, z]
-    assert set(out) == set(FINGER_BONE_NAMES) and len(out) == 40, sorted(
-        set(FINGER_BONE_NAMES) - set(out))
+    assert set(out) == set(want) and len(out) == len(want), sorted(set(want) - set(out))
     return out
+
+
+def _base_probe_finger_locals():
+    return _base_probe_locals(FINGER_BONE_NAMES)
 
 
 def test_v2_shape_and_topology():
@@ -78,16 +100,24 @@ def test_v2_shape_and_topology():
     bones = d["bones"]
     assert len(bones) == 84
     v1 = json.loads((BP / "posegoblin_rig_v1.json").read_text())["bones"]
-    base = _base_probe_finger_locals()
+    base = _base_probe_locals()
     for i in range(74):  # v1 indices preserved
         assert bones[i]["name"] == v1[i]["name"]
         if bones[i]["name"] in base:
             # R14: the 40 finger/thumb bones' rest comes from the TRUE base pose,
             # not from v1 -- whose right hand was captured curled into a fist.
+            # R15: so do the two clavicles -- v1's right one is 6.077 deg off.
             assert bones[i]["rest_local_q"] == pytest.approx(base[bones[i]["name"]], abs=1e-12)
         else:
-            assert bones[i]["rest_local_q"] == v1[i]["rest_local_q"]   # 34 body bones verbatim
-    assert sum(1 for b in bones[:74] if b["name"] in base) == 40       # positive control
+            assert bones[i]["rest_local_q"] == v1[i]["rest_local_q"]   # 32 body bones verbatim
+    assert sum(1 for b in bones[:74] if b["name"] in base) == 42       # positive control
+    # ...and exactly ONE of the 42 differs from v1 by more than v1's rounding:
+    # the right clavicle. A second one would mean R15 reached further than it
+    # claims; none would mean the rebase silently did nothing.
+    off = {bones[i]["name"]: _quat_deg(bones[i]["rest_local_q"], v1[i]["rest_local_q"])
+           for i in range(74) if bones[i]["name"] in CLAVICLE_BONE_NAMES}
+    assert off["left_clavicle"] < 1e-3, off
+    assert off["right_clavicle"] == pytest.approx(6.077, abs=0.01), off
     groups = bones[74:]
     assert [g["name"] for g in groups] == [f"transform{k}" for k in range(4, 14)]
     for g in groups:
@@ -136,10 +166,13 @@ _REST_WORLD_P_FK_TOL = 1e-4
 def _rest_world_p_mismatches(d, v1):
     """C2, in three branches -- returns the offending names; [] means clean.
 
-      - the 34 BODY bones: rest_world_p is copied verbatim from v1;
-      - the 40 FINGER/thumb bones (R14): their locals now come from the base
-        pose, so their world geometry moved with them and is RECOMPUTED. It
-        must agree with scale-aware FK over the asset's own stored locals;
+      - the 31 untouched BODY bones: rest_world_p is copied verbatim from v1;
+      - the 40 FINGER/thumb bones (R14) and right_shoulder/elbow/wrist (R15):
+        their rest moved -- their own locals in R14's case, their parent
+        clavicle's in R15's -- so their world geometry is RECOMPUTED and must
+        agree with scale-aware FK over the asset's own stored locals. The two
+        clavicles themselves stay on the verbatim branch: a bone's own
+        rotation cannot move its own world position;
       - the ten GROUPS: rest_world_p equals their own wrist's (`parent` IS the
         wrist index, by schema -- the group's local position is ~0).
 
@@ -147,12 +180,12 @@ def _rest_world_p_mismatches(d, v1):
     TRS and never reads rest_world_p at all -- so this is C2's only
     regression coverage under pytest."""
     bones = d["bones"]
-    base = _base_probe_finger_locals()
+    recomputed = set(FINGER_BONE_NAMES) | set(CLAVICLE_DEPENDENT_NAMES)
     fk = _fk_world_positions(bones)
     bad = []
     for i in range(74):
         b = bones[i]
-        if b["name"] in base:
+        if b["name"] in recomputed:
             if not np.allclose(b["rest_world_p"], fk[i], atol=_REST_WORLD_P_FK_TOL):
                 bad.append(b["name"])
         elif b["rest_world_p"] != v1[i]["rest_world_p"]:
@@ -171,11 +204,24 @@ def test_v2_rest_world_p_matches_v1_own_fk_and_own_wrist():
 
 def test_v2_finger_rest_world_p_actually_moved_off_v1():
     """The FK branch above would also pass if nothing had changed, so pin the
-    change itself: R14 re-based the finger rest, and the distal bones' world
-    positions had to follow. The `_1` bones must NOT move (their world position
-    depends on the wrist chain and their own offset, never on their own
-    rotation) -- which is what makes this a two-sided check rather than a
-    one-sided "something changed"."""
+    change itself: R14 re-based the finger rest and the distal bones' world
+    positions had to follow, and R15 then swung the whole RIGHT hand rigidly
+    under the corrected clavicle.
+
+    Split by side, because the two sides now say different things and a
+    single combined bound would hide both:
+
+      LEFT `_1` roots must NOT move -- a bone's world position depends on the
+      wrist chain and its own offset, never on its own rotation, and nothing
+      upstream of the left hand changed. Measured 1.5e-05, v1's own rounding.
+
+      RIGHT `_1` roots MUST move, by about what right_wrist moved (0.349),
+      because R15 rotated their whole chain 6.077 deg about the clavicle.
+      Measured 0.321-0.404 -- bracketing the wrist, as a rigid swing of bones
+      sitting a little either side of it must.
+
+    That two-sided split is what makes this a check rather than a
+    "something changed" assertion."""
     bones = json.loads(V2.read_text())["bones"]
     v1 = json.loads((BP / "posegoblin_rig_v1.json").read_text())["bones"]
     moved = {}
@@ -184,20 +230,33 @@ def test_v2_finger_rest_world_p_actually_moved_off_v1():
             moved[bones[i]["name"]] = float(np.linalg.norm(
                 np.array(bones[i]["rest_world_p"]) - np.array(v1[i]["rest_world_p"])))
     assert len(moved) == 40
+    wrist_i = next(i for i, b in enumerate(v1) if b["name"] == "right_wrist")
+    wrist_moved = float(np.linalg.norm(np.array(bones[wrist_i]["rest_world_p"])
+                                       - np.array(v1[wrist_i]["rest_world_p"])))
+    assert wrist_moved == pytest.approx(0.3491, abs=1e-3)          # R15, measured
+
     roots = {n: v for n, v in moved.items() if n.endswith(("_thumb_1", "_finger_1"))}
-    assert len(roots) == 10 and max(roots.values()) < 1e-4, roots
+    assert len(roots) == 10
+    left_roots = {n: v for n, v in roots.items() if n.startswith("left_")}
+    right_roots = {n: v for n, v in roots.items() if n.startswith("right_")}
+    assert len(left_roots) == len(right_roots) == 5
+    assert max(left_roots.values()) < 1e-4, left_roots
+    assert min(right_roots.values()) > 0.3 and max(right_roots.values()) < 0.45, right_roots
 
     # v1's right hand carried 33.87 deg mean of baked-in curl against the left's
     # 5.72 -- a ratio of 5.92 -- so every non-root RIGHT bone must have moved
-    # several times further than its left twin. Measured per bone: 4.93x-5.89x,
-    # tightly clustered, which is the fingerprint of one constant miscapture
-    # rather than of scattered noise. Bound at 3x for float headroom.
+    # several times further than its left twin. R15's rigid swing adds to both
+    # numerator and denominator unevenly and pulled the measured floor from
+    # 4.93x down to 2.54x; bound at 2x for float headroom. Still the
+    # fingerprint of one constant miscapture rather than scattered noise.
     pairs = [(n, moved[n], moved[n.replace("left", "right", 1)])
              for n in moved if n.startswith("left_") and not n.endswith("_1")]
     assert len(pairs) == 15
     for n, l, r in pairs:
-        assert r > 3.0 * l, (n, l, r)
-    assert max(r for _, _, r in pairs) == pytest.approx(0.9949, abs=1e-3)   # right_middle_tip
+        assert r > 2.0 * l, (n, l, r)
+    # right_middle_finger_tip: 0.9949 before R15, 0.7278 after -- R14's curl
+    # correction and R15's swing partly cancel on that bone.
+    assert max(r for _, _, r in pairs) == pytest.approx(0.7278, abs=1e-3)
 
 
 def test_rest_world_p_check_can_fail_on_a_mutated_copy():

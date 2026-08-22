@@ -68,16 +68,24 @@ def test_load_rig_v2_default_has_84_nodes_and_matches_v1_geometry():
 
     # R14: the 40 finger/thumb bones' REST no longer comes from v1 -- v1's right
     # hand was captured curled ~34 deg into a fist, and v16 composes onto rest.
-    # They now come from capture-rigbase2-11.json (the rig's true base pose) with
-    # rest_world_p recomputed; see tests/test_rig_v2_asset.py, which owns that
-    # contract. Everything else about indices 0..73 is still v1's, verbatim.
+    # R15: nor do the two CLAVICLES -- v1's right one is 6.077 deg off the app's
+    # base pose for the same reason -- and right_shoulder/elbow/wrist keep v1's
+    # own rest_local_q but had their rest_world_p re-derived under the corrected
+    # clavicle. Both now come from capture-rigbase2-11.json; see
+    # tests/test_rig_v2_asset.py, which owns that contract. Everything else
+    # about indices 0..73 is still v1's, verbatim.
     fingers = {i for i in range(74)
                if "_thumb_" in rig.name[i] or "_finger_" in rig.name[i]}
-    assert len(fingers) == 40                            # positive control
+    rebased_q = {i for i in range(74) if rig.name[i].endswith("_clavicle")} | fingers
+    rebased_p = rebased_q | {i for i in range(74) if rig.name[i] in
+                             ("right_shoulder", "right_elbow", "right_wrist")}
+    assert len(fingers) == 40                            # positive controls
+    assert len(rebased_q) == 42 and len(rebased_p) == 45
     for i in range(74):
         assert rig.name[i] == v1.name[i]
-        if i not in fingers:
+        if i not in rebased_q:
             assert np.array_equal(rig.rest_local_q[i], v1.rest_local_q[i])
+        if i not in rebased_p:
             assert np.array_equal(rig.rest_world_p[i], v1.rest_world_p[i])
         # bone OFFSETS are pose-independent and unchanged on every bone
         assert np.array_equal(rig.rest_local_p[i], v1.rest_local_p[i])

@@ -61,10 +61,33 @@ V1 = BP / "posegoblin_rig_v1.json"
 V2 = BP / "posegoblin_rig_v2.json"
 PROBE_PATHS = [BP / "capture-rigprobe-09.json", BP / "capture-rigrestprobe-10.json"]
 # R14: the rig reset to its TRUE base pose. Source of the 40 finger/thumb
-# bones' rest_local_q -- and of nothing else. Its BODY is at whatever pose the
-# live app was showing (right_shoulder alone reads 105.9 deg from v1's rest),
-# so reading anything but the hands off it would be wrong.
+# bones' rest_local_q -- and, since R15, the two clavicles'. Its BODY is
+# otherwise at whatever pose the live app was showing (right_shoulder alone
+# reads 105.9 deg from v1's rest), so reading anything else off it would be
+# wrong; see CLAVICLE_BONE_NAMES for what earns the clavicle exception.
 BASE_PROBE_PATH = BP / "capture-rigbase2-11.json"
+
+# R15 (2026-08-22): the two CLAVICLES come off the base probe too. That is a
+# deliberate exception to the sentence above and it is earned by a STRUCTURAL
+# check, not by trusting the probe's body: in the base probe the pair is an
+# exact mirror -- [0.707107, -0.707107, 0, 0] and [0.707107, +0.707107, 0, 0],
+# the +/-90 deg about X that the mirrored bone offsets require -- and the LEFT
+# one already equals v1's to v1's own rounding. v1's RIGHT clavicle is 6.077
+# deg off that: Scott's incidental posing recorded as rest, the same defect
+# R14 removed from the right hand. It matters because the solver emits
+# `rest_local . delta`, so a rest frame 6 deg off the app's own splits a
+# symmetric clavicle rotation asymmetrically between elevation and
+# protraction -- what Scott reported as a dislocated-looking shoulder ball.
+CLAVICLE_BONE_NAMES = ("left_clavicle", "right_clavicle")
+# Bones whose rest_world_p must follow the corrected clavicle. The clavicle's
+# OWN world position is fixed by spine_2 and its own offset, so it does not
+# move; everything below it does. The right hand's twenty bones are already on
+# the R14 recompute path and pick the change up there, and the five right-hand
+# groups inherit right_wrist's value.
+CLAVICLE_DEPENDENT_NAMES = ("right_shoulder", "right_elbow", "right_wrist")
+CLAVICLE_MIRROR_TOL_DEG = 1e-4       # base probe L vs mirrored R (measured: 0.0 exactly)
+CLAVICLE_LEFT_AGREES_TOL_DEG = 1e-3  # base probe left vs v1 left (measured: 4e-5, v1's rounding)
+CLAVICLE_RIGHT_MIN_DEG = 1.0         # v1's right must really be wrong (measured: 6.077)
 
 # transform4..8 hang off left_wrist, transform9..13 off right_wrist (binding wiring, from probes)
 GROUP_NAMES = [f"transform{k}" for k in range(4, 14)]
@@ -292,6 +315,47 @@ def main():
         f"{worst_sym:.4f} deg -- this probe was captured with a hand posed, "
         f"which is the exact defect R14 removed from v1")
 
+    # --- R15: the clavicle pair, from the base probe ------------------------
+    # Three gates, and the first two are what make reading the probe's BODY
+    # legitimate here where R14's note forbids it in general.
+    missing = [n for n in CLAVICLE_BONE_NAMES if n not in base_nodes]
+    assert not missing, f"{BASE_PROBE_PATH.name} is missing (or duplicates) {missing}"
+    base_clav_q = {n: _xyzw_to_wxyz(base_nodes[n]["quat"]) for n in CLAVICLE_BONE_NAMES}
+
+    # (a) offsets are pose-independent: if these disagree it is not this skeleton.
+    worst_clav_offset = max(
+        float(np.abs(np.array(v1_bones[name_to_i_v1[n]]["rest_local_p"], float)
+                     - np.array(base_nodes[n]["pos"], float)).max())
+        for n in CLAVICLE_BONE_NAMES)
+    assert worst_clav_offset <= BASE_OFFSET_TOL, (
+        f"base probe clavicle offsets differ from v1 by {worst_clav_offset} -- "
+        f"not the same skeleton")
+
+    # (b) STRUCTURAL: the pair must be an exact mirror. The two bone offsets
+    #     are exact negatives of each other, which forces the two rest frames
+    #     to differ by 180 deg about X -- i.e. w and x equal up to x's sign,
+    #     y and z zero. A probe caught mid-pose cannot satisfy this by luck,
+    #     so this is the check that stands in for trusting the probe's body.
+    lq, rq = base_clav_q["left_clavicle"], base_clav_q["right_clavicle"]
+    mirrored = np.array([rq[0], -rq[1], rq[2], rq[3]])
+    mirror_dev = _quat_deg(lq, mirrored)
+    assert mirror_dev <= CLAVICLE_MIRROR_TOL_DEG, (
+        f"base probe clavicles are NOT mirrored: {mirror_dev:.6f} deg -- this probe "
+        f"was captured with a clavicle posed, the defect R14/R15 exist to remove")
+    assert max(abs(lq[2]), abs(lq[3]), abs(rq[2]), abs(rq[3])) <= 1e-9, (
+        f"base probe clavicles carry y/z components: {lq}, {rq}")
+
+    # (c) the LEFT must already agree with v1 (positive control -- this
+    #     migration is about the right one) and the RIGHT must not.
+    dev_l = _quat_deg(lq, v1_bones[name_to_i_v1["left_clavicle"]]["rest_local_q"])
+    dev_r = _quat_deg(rq, v1_bones[name_to_i_v1["right_clavicle"]]["rest_local_q"])
+    assert dev_l <= CLAVICLE_LEFT_AGREES_TOL_DEG, (
+        f"base probe LEFT clavicle is {dev_l:.4f} deg off v1 -- the two sources were "
+        f"expected to agree there, so this probe is not comparable to v1 at all")
+    assert dev_r >= CLAVICLE_RIGHT_MIN_DEG, (
+        f"v1's RIGHT clavicle is only {dev_r:.4f} deg off the base probe -- R15 has "
+        f"nothing to correct and this build is silently a no-op")
+
     # --- probe sanity: every Bone node reads scale ~= 1.0 -------------------
     worst_bone_scale = max(
         float(np.max(np.abs(np.array(n["scale"], float) - 1.0)))
@@ -341,10 +405,37 @@ def main():
     v1_orphans = {b["name"] for b in v1_bones if b["parent"] is None and b["name"] != "pelvis"}
     assert set(finger_to_group) == v1_orphans, (set(finger_to_group), v1_orphans)
 
+    # --- R15: correct the clavicle rest, then re-derive what hangs off it ---
+    # Done on a copy of v1 BEFORE the fingers are reparented, so the plain
+    # 74-bone FK below is valid, and before the ten groups are appended, so
+    # they inherit right_wrist's corrected value rather than v1's stale one.
+    v1_bones = [dict(b) for b in v1_bones]
+    for n in CLAVICLE_BONE_NAMES:
+        v1_bones[name_to_i_v1[n]]["rest_local_q"] = base_clav_q[n]
+    clav_world = _fk_world_matrices(v1_bones)
+    clav_moved = []
+    for n in CLAVICLE_DEPENDENT_NAMES:
+        i = name_to_i_v1[n]
+        was = np.array(v1_bones[i]["rest_world_p"], float)
+        now = [round(float(v), 6) for v in clav_world[i][:3, 3]]
+        v1_bones[i]["rest_world_p"] = now
+        clav_moved.append((float(np.linalg.norm(np.array(now) - was)), n))
+    # Positive control: the clavicle's own world position must NOT move (its
+    # own rotation cannot move it), and the LEFT arm must not move at all --
+    # if either did, this is reaching further than the right clavicle.
+    for n in ("right_clavicle", "left_clavicle", "left_shoulder", "left_elbow", "left_wrist"):
+        i = name_to_i_v1[n]
+        dev = float(np.abs(clav_world[i][:3, 3]
+                           - np.array(v1_bones[i]["rest_world_p"], float)).max())
+        assert dev <= FK_BODY_SELFCHECK_TOL, f"R15 moved {n} by {dev} -- it must not"
+    assert min(d for d, _ in clav_moved) > 0.1, (
+        f"R15 changed the right clavicle's rest but its chain barely moved: {clav_moved}")
+
     # --- assemble the 74 v1 bones: copy verbatim, add scale/is_group --------
-    # The 34 body bones keep v1's rest verbatim. The 40 finger/thumb bones take
-    # rest_local_q from the base-pose probe (R14); their rest_world_p is a
-    # placeholder here and is recomputed by FK once the groups exist below.
+    # The 34 body bones keep v1's rest verbatim apart from the R15 clavicle
+    # correction above. The 40 finger/thumb bones take rest_local_q from the
+    # base-pose probe (R14); their rest_world_p is a placeholder here and is
+    # recomputed by FK once the groups exist below.
     out_bones = [{
         "name": b["name"],
         "parent": b["parent"],
@@ -471,10 +562,35 @@ def main():
                 "right hand by that amount. In the base pose the two hands carry the SAME "
                 "local quaternion on all 20 bones per side to 1.79e-4 deg. Those 40 bones' "
                 "rest_world_p is recomputed here by scale-aware FK (the _1 bones do not "
-                "move; _2/_3/_tip do). The 34 BODY bones keep v1's values verbatim -- the "
-                "base probe's body is at whatever pose the live app was showing and must "
-                "not be read for anything but the hands. posegoblin_rig_v1.json is "
-                "untouched and remains the historical asset."),
+                "move; _2/_3/_tip do). The other 32 BODY bones keep v1's values verbatim "
+                "-- the base probe's body is at whatever pose the live app was showing "
+                "and must not be read for anything but the hands and the two clavicles "
+                "(see clavicle_rest_note). posegoblin_rig_v1.json is untouched and "
+                "remains the historical asset."),
+            "clavicle_rest_note": (
+                "R15 (2026-08-22): the two clavicles' rest_local_q also comes from "
+                "capture-rigbase2-11.json. v1's LEFT clavicle already equals the base "
+                "probe's to v1's own rounding; its RIGHT is 6.077 deg off -- Scott's "
+                "incidental posing recorded as rest, the same defect R14 removed from "
+                "the right hand. Reading the probe's BODY is otherwise forbidden above, "
+                "so this exception is earned STRUCTURALLY rather than by trusting it: "
+                "the two clavicle bone offsets are exact negatives of each other, which "
+                "forces their rest frames to differ by 180 deg about X, and the probe's "
+                "pair satisfies that exactly ([0.707107, -0.707107, 0, 0] and "
+                "[0.707107, +0.707107, 0, 0], mirror deviation 0.0 deg) while v1's does "
+                "not. A posed capture cannot land on that by luck. It matters because "
+                "the solver emits `rest_local . delta`: a rest frame 6 deg off the app's "
+                "own splits a symmetric clavicle rotation asymmetrically between "
+                "elevation and protraction, which Scott reported as a dislocated-looking "
+                "right shoulder ball. right_shoulder/right_elbow/right_wrist rest_world_p "
+                "are recomputed by FK to follow (the clavicle's own does not move; its "
+                "rotation cannot move it), the right hand's twenty bones follow on the "
+                "R14 path, and the five right-hand groups inherit right_wrist's value. "
+                "CAVEAT, measured and deliberately not acted on here: v1's body rest "
+                "descends from capture-rigrest-02.json, which is a POSED capture -- 43 of "
+                "its 73 bones differ from the base probe, up to 105.9 deg at "
+                "right_shoulder. R14 migrated the hands, R15 the clavicles; the rest of "
+                "the body is still v1's A-pose and is what the solver solves against."),
         },
         "bones": out_bones,
     }
@@ -492,6 +608,10 @@ def main():
     print(f"{len(out_bones)} nodes, {solved} solved, groups 74..83")
     print(f"  R14 base-pose finger rest: hands symmetric to {worst_sym:.2e} deg "
           f"({worst_sym_name}); offsets match v1 to {worst_offset:.2e}")
+    print(f"  R15 clavicle rest from base probe: mirror dev {mirror_dev:.2e} deg, "
+          f"left agrees with v1 to {dev_l:.2e} deg, right corrected by {dev_r:.3f} deg")
+    print("     rest_world_p followed: "
+          + ", ".join(f"{n} {d:.4f}" for d, n in clav_moved))
     print(f"  R14 rest_world_p recomputed for 40 finger bones; FK reproduces the 34 body "
           f"bones to {body_dev:.2e} ({body_name})")
     print(f"     largest shift {finger_moved[0][0]:.4f} ({finger_moved[0][1]}), "
