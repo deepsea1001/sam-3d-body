@@ -42,15 +42,18 @@ V1 = BP / "posegoblin_rig_v1.json"
 V2 = BP / "posegoblin_rig_v2.json"
 PROBE_PATHS = [BP / "capture-rigprobe-09.json", BP / "capture-rigrestprobe-10.json"]
 
-GROUP_NAMES = [f"transform{k}" for k in range(4, 14)]  # transform4..8 left, 9..13 right (binding, from probes)
+# transform4..8 hang off left_wrist, transform9..13 off right_wrist (binding wiring, from probes)
+GROUP_NAMES = [f"transform{k}" for k in range(4, 14)]
 
-# Tolerances -- see task-2-report.md for the measured values behind each of these.
+# Tolerances below are generous relative to what's actually measured (see this script's own
+# printed gate output, and the two cross-checks in main()); each comment gives the measured value.
 BONE_SCALE_TOL = 1e-6              # probe Bone nodes must read scale ~= 1.0
-CROSS_PROBE_TOL = 1e-9             # a given group's local must be pose-independent (measured: exactly 0.0)
-CROSS_GROUP_TOL = 1e-6             # the ten groups share one fixed local transform (measured: ~5.3e-15)
-GROUP_WORLD_SELFCHECK_TOL = 1e-3   # FK group world pos vs its wrist's stored rest_world_p (generous: v1's
-                                    # own 6-decimal rounding alone accounts for ~1.7e-5 of chain drift)
-GATE_TOL = 1e-6                    # build-time reproduction gate (mirrors tests/test_rig_v2_asset.py)
+CROSS_PROBE_TOL = 1e-9             # a group's local is pose-independent (measured: 0.0 exactly)
+CROSS_GROUP_TOL = 1e-6             # the ten groups share one fixed local (measured: ~5.3e-15)
+# FK group world pos vs its wrist's stored rest_world_p. Generous: v1's own 6-decimal rounding
+# alone accounts for ~1.7e-5 of chain drift (measured: ~9.4e-6 left, ~5.2e-6 right).
+GROUP_WORLD_SELFCHECK_TOL = 1e-3
+GATE_TOL = 1e-6                    # build-time reproduction gate (mirrors test_rig_v2_asset.py)
 
 
 def _mat_local(pos, quat_xyzw, scale):
@@ -81,7 +84,8 @@ def _load(path):
 
 def _probe_groups(probe):
     """{group name -> probe node} for the ten transform4..13 Group nodes."""
-    out = {n["name"]: n for n in probe["nodes"] if n["type"] == "Group" and n["name"] in GROUP_NAMES}
+    out = {n["name"]: n for n in probe["nodes"]
+           if n["type"] == "Group" and n["name"] in GROUP_NAMES}
     missing = set(GROUP_NAMES) - set(out)
     assert not missing, f"probe missing group nodes: {sorted(missing)}"
     return out
@@ -92,7 +96,8 @@ def _finger1_to_group(probe):
     Bone whose parent_uuid resolves to one of the ten transform Groups."""
     group_uuid_to_name = {g["uuid"]: name for name, g in _probe_groups(probe).items()}
     return {n["name"]: group_uuid_to_name[n["parent_uuid"]]
-            for n in probe["nodes"] if n["type"] == "Bone" and n["parent_uuid"] in group_uuid_to_name}
+            for n in probe["nodes"]
+            if n["type"] == "Bone" and n["parent_uuid"] in group_uuid_to_name}
 
 
 def _fk_world_matrices(v1_bones):
@@ -175,12 +180,14 @@ def main():
         float(np.max(np.abs(np.array(n["scale"], float) - 1.0)))
         for probe in probes for n in probe["nodes"] if n["type"] == "Bone"
     )
-    assert worst_bone_scale <= BONE_SCALE_TOL, f"probe Bone scale deviates from 1.0 by {worst_bone_scale}"
+    assert worst_bone_scale <= BONE_SCALE_TOL, (
+        f"probe Bone scale deviates from 1.0 by {worst_bone_scale}")
 
     # --- extract each probe's ten group locals (pos, quat_xyzw, scale) ------
     def group_local(node):
         s = np.array(node["scale"], float)
-        assert (s.max() - s.min()) <= CROSS_GROUP_TOL, f"{node['name']} scale not uniform: {node['scale']}"
+        assert (s.max() - s.min()) <= CROSS_GROUP_TOL, (
+            f"{node['name']} scale not uniform: {node['scale']}")
         return {"pos": list(node["pos"]), "quat_xyzw": list(node["quat"]), "scale": float(s.mean())}
 
     locals_by_probe = [{name: group_local(node) for name, node in _probe_groups(probe).items()}
@@ -195,31 +202,38 @@ def main():
         float(np.abs(_vec(locals_by_probe[0][name]) - _vec(locals_by_probe[1][name])).max())
         for name in GROUP_NAMES
     )
-    assert worst_cross_probe <= CROSS_PROBE_TOL, f"group locals differ between probes: worst {worst_cross_probe}"
+    assert worst_cross_probe <= CROSS_PROBE_TOL, (
+        f"group locals differ between probes: worst {worst_cross_probe}")
 
     # cross-group: within one probe, all ten groups share the same fixed
-    # rotation + scale (see task-2-report.md for the measured spread).
+    # rotation + scale (measured worst spread: ~5.3e-15, see CROSS_GROUP_TOL above).
     worst_cross_group = 0.0
     for gl in locals_by_probe:
         vecs = [_vec(gl[name]) for name in GROUP_NAMES]
         for a in vecs:
             for b in vecs:
                 worst_cross_group = max(worst_cross_group, float(np.abs(a - b).max()))
-    assert worst_cross_group <= CROSS_GROUP_TOL, f"group locals differ across the ten groups: worst {worst_cross_group}"
+    assert worst_cross_group <= CROSS_GROUP_TOL, (
+        f"group locals differ across the ten groups: worst {worst_cross_group}")
 
     # --- topology: which group each finger/thumb `_1` bone hangs from -------
     f2g = [_finger1_to_group(probe) for probe in probes]
     assert f2g[0] == f2g[1], "finger->group wiring disagrees between probes"
     finger_to_group = f2g[0]
     assert len(finger_to_group) == len(GROUP_NAMES) == 10
-    v1_orphans = {b["name"] for i, b in enumerate(v1_bones) if b["parent"] is None and b["name"] != "pelvis"}
+    v1_orphans = {b["name"] for b in v1_bones if b["parent"] is None and b["name"] != "pelvis"}
     assert set(finger_to_group) == v1_orphans, (set(finger_to_group), v1_orphans)
 
     # --- assemble the 74 v1 bones: copy verbatim, add scale/is_group --------
     out_bones = [{
-        "name": b["name"], "parent": b["parent"],
-        "rest_local_q": b["rest_local_q"], "rest_local_p": b["rest_local_p"], "rest_world_p": b["rest_world_p"],
-        "scale": 1.0, "is_group": False, "solve": b["solve"],
+        "name": b["name"],
+        "parent": b["parent"],
+        "rest_local_q": b["rest_local_q"],
+        "rest_local_p": b["rest_local_p"],
+        "rest_world_p": b["rest_world_p"],
+        "scale": 1.0,
+        "is_group": False,
+        "solve": b["solve"],
     } for b in v1_bones]
 
     # reconnect the ten finger islands through their group's (soon-to-exist) index
@@ -286,7 +300,8 @@ def main():
         "version": "posegoblin_rig_v2",
         "provenance": {
             "captured": "2026-08-22",
-            "source": "posegoblin_rig_v1.json + capture-rigprobe-09.json + capture-rigrestprobe-10.json",
+            "source": ("posegoblin_rig_v1.json + capture-rigprobe-09.json + "
+                       "capture-rigrestprobe-10.json"),
             "note": ("v1's 74 bones at the same indices, unchanged, plus ten Group nodes "
                       "(transform4..13, indices 74..83) appended: the constant wrist-side "
                       "containers the ten *_thumb_1/*_finger_1 chains actually hang off on "
@@ -304,7 +319,8 @@ def main():
     for path, probe in zip(PROBE_PATHS, probes):
         worst = _reproduce(doc, probe)
         gate_results[path.name] = worst
-        assert worst <= GATE_TOL, f"reproduction gate failed against {path.name}: worst error {worst} > {GATE_TOL}"
+        assert worst <= GATE_TOL, (
+            f"reproduction gate failed against {path.name}: worst error {worst} > {GATE_TOL}")
 
     V2.write_text(json.dumps(doc, indent=1))
     print(f"{len(out_bones)} nodes, {solved} solved, groups 74..83")
