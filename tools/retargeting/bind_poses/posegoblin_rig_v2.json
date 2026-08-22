@@ -3,7 +3,7 @@
  "provenance": {
   "captured": "2026-08-22",
   "source": "posegoblin_rig_v1.json + capture-rigprobe-09.json + capture-rigrestprobe-10.json",
-  "note": "v1's 74 bones at the same indices, unchanged, plus ten Group nodes (transform4..13, indices 74..83) appended: the constant wrist-side containers the ten *_thumb_1/*_finger_1 chains actually hang off on the live rig (fixed rotation + 0.1 uniform scale). Their `parent` flips from null to their group's index; the 30 finger phalanges (_1,_2,_3) flip solve:false -> true (tips stay false). Built by tools_build_rig_v2.py; see that file and task-2-report.md for the reproduction-gate numbers."
+  "note": "v1's 74 bones at the same indices, unchanged, plus ten Group nodes (transform4..13, indices 74..83) appended: the constant wrist-side containers the ten *_thumb_1/*_finger_1 chains actually hang off on the live rig (fixed rotation + 0.1 uniform scale). Their `parent` flips from null to their group's index; the 30 finger phalanges (_1,_2,_3) flip solve:false -> true (tips stay false). Built by tools_build_rig_v2.py, which re-runs and prints the reproduction-gate numbers on every rebuild."
  },
  "bones": [
   {

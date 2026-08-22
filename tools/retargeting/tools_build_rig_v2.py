@@ -293,8 +293,8 @@ def main():
                       "the live rig (fixed rotation + 0.1 uniform scale). Their `parent` "
                       "flips from null to their group's index; the 30 finger phalanges "
                       "(_1,_2,_3) flip solve:false -> true (tips stay false). Built by "
-                      "tools_build_rig_v2.py; see that file and task-2-report.md for the "
-                      "reproduction-gate numbers."),
+                      "tools_build_rig_v2.py, which re-runs and prints the reproduction-"
+                      "gate numbers on every rebuild."),
         },
         "bones": out_bones,
     }
