@@ -51,7 +51,12 @@ from retargeting.retargeters.posegoblin_rig import (
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mhr_npz_rows.json"
 ROWS = json.loads(_FIXTURE.read_text())["rows"]
 DEV_ROW = "a6566802a6c9ddd63340ccb4520e0001"
-HAND_POSES = Path("/Users/scotteaton/Dropbox/CODE/poseGoblin/poses/hand_poses.json")
+# Sibling repo, not a runtime dependency -- repo-relative (from this file's
+# own location), not the absolute /Users/scotteaton/... path this used to
+# hardcode. Same fix as tools_extract_finger_axes.py's HAND_POSES and
+# consistent with e0e9426's ruling against baked-in cross-repo absolute
+# paths.
+HAND_POSES = Path(__file__).resolve().parents[4] / "poseGoblin" / "poses" / "hand_poses.json"
 # v1: a genuinely DIFFERENT rig -- different version string, different finger
 # rest (its right hand was captured curled into a fist, which is what R14
 # removed from v2), finger islands still disconnected at `parent: None`.

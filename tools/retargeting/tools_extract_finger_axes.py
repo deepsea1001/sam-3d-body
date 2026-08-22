@@ -55,7 +55,14 @@ import numpy as np
 from retargeting.core.math_utils import QuaternionMath
 from retargeting.retargeters.posegoblin_rig import load_rig
 
-HAND_POSES = Path("/Users/scotteaton/Dropbox/CODE/poseGoblin/poses/hand_poses.json")
+# Sibling repo (see module docstring), not a runtime dependency. Kept
+# REPO-RELATIVE, not the absolute /Users/scotteaton/... path this used to
+# hardcode -- e0e9426 already ruled out exactly that shape of reference (a
+# cross-repo absolute path baked into committed provenance) for the v2 rig
+# asset's provenance.note; this is the same fix applied to this asset's
+# provenance.hand_poses, which `str(hand_poses)` below writes verbatim.
+_SAM3D_BODY_ROOT = Path(__file__).resolve().parents[2]   # .../sam-3d-body
+HAND_POSES = Path("../poseGoblin/poses/hand_poses.json")   # relative to the repo root
 OUT = Path(__file__).resolve().parent / "bind_poses" / "mannequin_finger_axes.json"
 REFERENCE_POSE = "Fist"
 # R14 left/right agreement bounds. Measured on the corrected asset: 0.0023 deg
@@ -76,9 +83,15 @@ def _shortest(q):
 
 
 def main(hand_poses: Path = HAND_POSES, out: Path = OUT) -> None:
-    presets = {e["name"]: e["pose"] for e in json.loads(Path(hand_poses).read_text())}
+    # *hand_poses* is recorded into provenance below AS GIVEN (relative by
+    # default) -- resolved against the repo root only for the actual read,
+    # never for what gets written, so the committed asset stays portable.
+    hand_poses_path = Path(hand_poses)
+    if not hand_poses_path.is_absolute():
+        hand_poses_path = (_SAM3D_BODY_ROOT / hand_poses_path).resolve()
+    presets = {e["name"]: e["pose"] for e in json.loads(hand_poses_path.read_text())}
     if REFERENCE_POSE not in presets:
-        raise SystemExit(f"{hand_poses} has no {REFERENCE_POSE!r} preset "
+        raise SystemExit(f"{hand_poses_path} has no {REFERENCE_POSE!r} preset "
                          f"(found {sorted(presets)})")
     fist = presets[REFERENCE_POSE]
     rig = load_rig()

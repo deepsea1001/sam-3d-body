@@ -1,7 +1,7 @@
 {
  "version": 1,
  "provenance": {
-  "hand_poses": "/Users/scotteaton/Dropbox/CODE/poseGoblin/poses/hand_poses.json",
+  "hand_poses": "../poseGoblin/poses/hand_poses.json",
   "reference_pose": "Fist",
   "rig_asset": "bind_poses/posegoblin_rig_v2.json",
   "rig_version": "posegoblin_rig_v2",

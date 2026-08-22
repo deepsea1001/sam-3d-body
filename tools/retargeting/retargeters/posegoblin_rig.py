@@ -908,10 +908,21 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
         # freedom for bend direction, split 65/35 by the rig itself.
         # `_SPINE1_SHARE` is that behaviour, not a fudge factor: it was
         # originally read off two captures (crouch 60.7/32.8, hoop
-        # 37.0/19.9), and the independent six confirm it. Do not touch it,
-        # and do not "improve" it by driving the two bones independently --
-        # per-joint real rotations cannot reproduce a fixed ratio, which is
-        # what SPINE_SOURCE_MHR and SPINE_SOURCE_HYBRID both founder on.
+        # 37.0/19.9), and the independent six confirm it. Do not touch this
+        # FIXED-RATIO construction, and do not "improve" it by driving the
+        # two bones independently -- per-joint real rotations cannot
+        # reproduce a fixed ratio, which is what SPINE_SOURCE_MHR and
+        # SPINE_SOURCE_HYBRID both founder on.
+        #
+        # That prohibition is scoped to THESE fixed-ratio constructions, not
+        # to per-joint transfer in general: the shipped default,
+        # SPINE_SOURCE_REL_PERJOINT (above), drives spine_1 and spine_2
+        # independently from per-joint MHR rows on purpose. It was measured
+        # on TOTAL chest-vs-pelvis rotation error, not on per-joint local
+        # error against this 65/35 split -- a metric this split itself
+        # confounds, since the split is Scott's own posing habit, not an
+        # anatomical constant. On the total-error metric REL_PERJOINT wins
+        # (a measured ruling, not an oversight of the paragraph above).
         #
         # The TOTAL is where v15 is genuinely weak, and it is the only thing
         # SPINE_SOURCE_REAL_TOTAL changes.
@@ -1690,12 +1701,15 @@ def rig_state_from_mhr70(kp_cam: np.ndarray, mhr_rots: np.ndarray | None = None)
     viewer: every rig bone posed (rig units), ready to serialize.
 
     *mhr_rots* is this row's (127,3,3) `joint_global_rots` when its
-    `mhr_params_npz` blob is available (`mhr_rots_from_npz`), and poses the
-    spine from the model's own rotations; None keeps the v15 spine."""
+    `mhr_params_npz` blob is available (`mhr_rots_from_npz`), and poses both
+    the spine AND the fingers from the model's own rotations (v16 task 5);
+    None keeps the v15 spine and rest fingers."""
     rig = load_rig()
     li = rig.index_of_name
     targets = rig_targets_from_mhr70(kp_cam)
-    # index-keyed, the 34 SOLVED bones ONLY (ruling 7)
+    # index-keyed, the SOLVED bones per solved_indices' own contract -- 34
+    # without mhr_rots, up to 64 (34 + the phalanges of every digit that
+    # passes its integrity gate) with it (ruling 7)
     solved = solve_rig_locals(rig, targets, mhr_rots)
 
     if ROOT_DISPLAY_YAW_DEG:
