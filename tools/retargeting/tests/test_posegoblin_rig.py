@@ -196,11 +196,12 @@ def test_rig_state_covers_every_rig_bone_and_serializes():
     # did NOT bump it -- the 34 originally-solved bones behave identically on
     # the richer asset (see test_rig_v2_runtime.py). 16 was v16 task 4's real
     # spine, posed from the row's own mhr_params_npz joint rotations (see
-    # test_npz_spine.py). 17 is retarget-multi-child's own solve change:
-    # clavicle rotation transfer, the right-clavicle rest fix, and the
-    # spine's REL_TOTAL 65/35 redistribution (task-reltotal-report.md) --
-    # three more solve-changing landings since 16 was stamped.
-    assert st["rigVersion"] == "posegoblin_rig_v2" and st["retargetVersion"] == 17
+    # test_npz_spine.py). 17 was retarget-multi-child's clavicle rotation
+    # transfer, right-clavicle rest fix and REL_TOTAL 65/35 redistribution
+    # (task-reltotal-report.md). 18 is task-relpeak: the spine total is the
+    # column's PEAK, not its end (test_spine_rel_peak.py), and the neck is
+    # the model's own c_neck, chest-relative (test_npz_neck.py).
+    assert st["rigVersion"] == "posegoblin_rig_v2" and st["retargetVersion"] == 18
     # wire-safe: json.dumps ALONE is insufficient -- Python happily emits a
     # bare `NaN`/`Infinity` token (invalid JSON; JavaScript's JSON.parse
     # rejects it), so round-trip through parse_constant and make IT raise.

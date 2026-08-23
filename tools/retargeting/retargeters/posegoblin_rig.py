@@ -2350,7 +2350,7 @@ def rig_state_from_mhr70(kp_cam: np.ndarray, mhr_rots: np.ndarray | None = None)
         "groundY": float(min(feet) * s) if feet else 0.0,
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
-        "retargetVersion": 17,
+        "retargetVersion": 18,
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state

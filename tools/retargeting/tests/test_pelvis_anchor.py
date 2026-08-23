@@ -403,7 +403,7 @@ def test_the_pelvis_position_machinery_is_untouched(monkeypatch):
         sn = rig_state_from_mhr70(kp, rots)
         assert sh["pelvisPosition"] == sn["pelvisPosition"]
         assert sh["groundY"] == sn["groundY"]
-        assert sh["retargetVersion"] == sn["retargetVersion"] == 17
+        assert sh["retargetVersion"] == sn["retargetVersion"] == 18
         assert sh["pose"]["pelvis"] != sn["pose"]["pelvis"]   # positive control
 
 
