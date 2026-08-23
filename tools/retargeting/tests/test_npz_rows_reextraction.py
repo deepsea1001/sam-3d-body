@@ -19,7 +19,12 @@ claim each append is licensed by: row 18 (1c3ba88d, the crawl row behind the
 npz pelvis anchor, task-pelvis 2026-08-23) was appended only after all
 seventeen prior rows re-extracted byte-for-byte, exactly as row 17 was. A
 control that only ever re-checks the newest row could not have caught the
-append reformatting or perturbing an older one.
+append reformatting or perturbing an older one. Rows 19-21 (e622f027 crouch,
+d3359029 fold, b657df59 bridge -- flexion-peak coverage for
+SPINE_SOURCE_REL_PEAK, task-relpeak 2026-08-24) were appended under the same
+control; they come from the run-motion test10k shards, not motion-diverse-1k,
+so the corpus directory this control points at must hold BOTH shard sets for
+every row to resolve.
 
 The rounding was not guessed: kp70 and pred_joint_coords round to 6dp,
 joint_global_rots to 7dp, cam_t is unrounded (only the float32->float64
@@ -49,6 +54,13 @@ _FIXTURE_ROWS = json.loads(FIXTURE.read_text())["rows"]
 ROW_IDS = sorted(_FIXTURE_ROWS)
 PIKE_ROW_ID = "0693dd37755e0d6eb9012857f5e3b405"
 CRAWL_ROW_ID = "1c3ba88d8b32b3c20a458eb5512ee3f8"
+# task-relpeak (2026-08-24): flexion-peak coverage. From the run-motion
+# test10k shards -- a different corpus than the eighteen rows above.
+RELPEAK_ROW_IDS = (
+    "e622f0279e7c43e4a01fe0663decbea4",   # crouch: peak 61.4 vs end 50.1 deg
+    "d33590290bd4cb7f082c33213d8c56c9",   # fold: peak 67.0 vs end 66.9 -- monotonic control
+    "b657df59fed7c9b1adc9afc70937ae8b",   # bridge: peak 33.1 vs end 31.4 -- extension control
+)
 
 # Where to find the corpus (unset -> skip, the common case for any checkout
 # that isn't holding this scratch corpus) and the poseforge3d checkout that
@@ -108,9 +120,11 @@ _CORPUS_ROWS: dict | None = None
 
 
 def _corpus_rows() -> dict:
-    """The corpus, read once per session and keyed by point_id -- 1800 rows
-    off five parquet shards is seconds, and this file asks for eighteen of
-    them."""
+    """The corpus, read once per session and keyed by point_id -- reading
+    every shard in the directory is seconds, and this file asks for
+    twenty-one rows of it. Since task-relpeak the directory must hold both
+    the motion-diverse-1k shards (rows 1-18) and the run-motion test10k
+    shards (rows 19-21)."""
     global _CORPUS_ROWS
     if _CORPUS_ROWS is None:
         rows = _READ_SHARDS(str(_CORPUS))
@@ -129,7 +143,9 @@ def _extract_row(row_id: str) -> dict[str, np.ndarray]:
     by_id = _corpus_rows()
     assert row_id in by_id, (
         f"{row_id} not among {len(by_id)} rows read from {_CORPUS} -- "
-        f"wrong corpus (expected motion-diverse-1k's review-rerun shards)."
+        f"wrong corpus (rows 1-18 need motion-diverse-1k's review-rerun "
+        f"shards, rows 19-21 the run-motion test10k shards; the directory "
+        f"must hold both)."
     )
     row = by_id[row_id]
 
@@ -156,13 +172,15 @@ def _fixture_row(row_id: str) -> dict[str, np.ndarray]:
             for k in ("kp70", "cam_t", "joint_global_rots", "pred_joint_coords")}
 
 
-def test_the_two_appended_rows_are_actually_in_the_fixture():
-    """Runs with or without the corpus, so a fixture that silently lost the
-    pike or the crawl row cannot read as a clean skip. Eighteen rows as of
-    2026-08-23."""
+def test_the_appended_rows_are_actually_in_the_fixture():
+    """Runs with or without the corpus, so a fixture that silently lost an
+    appended row cannot read as a clean skip. Twenty-one rows as of
+    2026-08-24 (task-relpeak's three flexion rows)."""
     assert PIKE_ROW_ID in _FIXTURE_ROWS
     assert CRAWL_ROW_ID in _FIXTURE_ROWS
-    assert len(ROW_IDS) == 18, sorted(r[:8] for r in ROW_IDS)
+    for row_id in RELPEAK_ROW_IDS:
+        assert row_id in _FIXTURE_ROWS, row_id
+    assert len(ROW_IDS) == 21, sorted(r[:8] for r in ROW_IDS)
 
 
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
@@ -175,7 +193,8 @@ def test_every_fixture_row_reextracts_byte_identical():
 
     This is the control each append is licensed by. 1c3ba88d (the crawl row,
     task-pelvis) was added only after the seventeen rows preceding it passed
-    this, exactly as 0693dd37 was added after sixteen."""
+    this, exactly as 0693dd37 was added after sixteen, and task-relpeak's
+    three flexion rows after eighteen."""
     checked = 0
     for row_id in ROW_IDS:
         extracted = _extract_row(row_id)
@@ -189,7 +208,7 @@ def test_every_fixture_row_reextracts_byte_identical():
                 f"{row_id[:8]} {key} NOT byte-identical: maxabsdiff="
                 f"{np.max(np.abs(extracted_val - fixture_val)):.3e}")
             checked += 1
-    assert checked == 4 * 18, checked        # positive control: the loop ran
+    assert checked == 4 * 21, checked        # positive control: the loop ran
 
 
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)

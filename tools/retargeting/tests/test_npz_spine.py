@@ -589,15 +589,16 @@ def _spine_edge_cosines(row_id, source):
 # genuinely bend, arch and laterally flex the spine, directions the original
 # six never covered at all.
 #
-# The counts are the summary, over 36 edges (18 rows x 2) since the crawl row
-# 1c3ba88d joined the fixture on 2026-08-23: the default (rel_total) violates
-# 9 times (8 over the previous 17 rows), rel_perjoint
-# once, the mapping v16 first shipped 5, the hybrid 5, v15 7. The default is
+# The counts are the summary, over 42 edges (21 rows x 2) since task-relpeak's
+# three flexion rows joined the fixture on 2026-08-24 (36 edges when the crawl
+# row 1c3ba88d joined on 2026-08-23): the default (rel_total) violates
+# 13 times (9 over the previous 18 rows), rel_perjoint
+# 2, the mapping v16 first shipped 7, the hybrid 6, v15 8. The default is
 # NOT the leader on this machine-side metric and was never chosen on it --
 # see test_where_the_default_leads... below, which asserts both halves.
 _SPINE_FLOOR_VIOLATIONS = {
-    # THE DEFAULT since 2026-08-23. Its spine_2->neck row is rel_perjoint's,
-    # bit for bit -- same chest. The eight spine_1->spine_2 rows are the
+    # THE DEFAULT since 2026-08-23. Its spine_2->neck rows are rel_perjoint's,
+    # bit for bit -- same chest. The eleven spine_1->spine_2 rows are the
     # PRICE of the 65/35 distribution ruling, and every one of them is a row
     # where the model bends its own mid-back well past 65% of its total
     # (0693dd37 is the extreme: |rel(36)| 87.8 against a 66.5 total, so a
@@ -618,10 +619,21 @@ _SPINE_FLOOR_VIOLATIONS = {
                                             # one is rel_perjoint's too
         ("a5a0e4f1", "spine_1->spine_2"),   # inverted-tuck, 0.9323
         ("a75968b1", "spine_1->spine_2"),   # seated-forward-fold, 0.9437
+        ("b657df59", "spine_1->spine_2"),   # bridge, 0.9690 -- an EXTENSION
+                                            # row six ten-thousandths under
+                                            # the 0.9696 floor; its mid-back
+                                            # arches past 65% just as the
+                                            # folds bend past it
+        ("b657df59", "spine_2->neck"),      # bridge, 0.8151 -- chest is
+                                            # rel_perjoint's, so rel_perjoint's
+                                            # too
         ("b7c95336", "spine_1->spine_2"),   # hoop-inverted, 0.9565
+        ("d3359029", "spine_1->spine_2"),   # fold, 0.9259
+        ("e622f027", "spine_1->spine_2"),   # crouch, 0.8876
     },
     "rel_perjoint": {
         ("8ea93cbf", "spine_2->neck"),      # scorpion-handstand, 0.8062
+        ("b657df59", "spine_2->neck"),      # bridge, 0.8151
     },
     "mhr": {
         ("1e6a7a60", "spine_1->spine_2"),   # 0.9504
@@ -629,13 +641,16 @@ _SPINE_FLOOR_VIOLATIONS = {
         ("8ea93cbf", "spine_2->neck"),      # 0.8062
         ("9029c8a8", "spine_1->spine_2"),   # 0.9499
         ("a9099833", "spine_1->spine_2"),   # 0.9371
+        ("b657df59", "spine_1->spine_2"),   # bridge, 0.9175
+        ("b657df59", "spine_2->neck"),      # bridge, 0.8151
     },
     "hybrid": {
         ("3b66ffdf", "spine_2->neck"),      # 0.7943 -- spine_2 is v15's
         ("4fe66c92", "spine_2->neck"),      # 0.7980    landmark anchor under
         ("a5a0e4f1", "spine_2->neck"),      # 0.8171    the hybrid, so these
-        ("a75968b1", "spine_2->neck"),      # 0.7793    five are v15's too
+        ("a75968b1", "spine_2->neck"),      # 0.7793    six are v15's too
         ("b7c95336", "spine_2->neck"),      # 0.8039
+        ("d3359029", "spine_2->neck"),      # fold, 0.7841
     },
     "v15": {
         ("1e6a7a60", "spine_1->spine_2"),   # 0.9581
@@ -645,6 +660,7 @@ _SPINE_FLOOR_VIOLATIONS = {
         ("a5a0e4f1", "spine_2->neck"),      # 0.8171
         ("a75968b1", "spine_2->neck"),      # 0.7793
         ("b7c95336", "spine_2->neck"),      # 0.8039
+        ("d3359029", "spine_2->neck"),      # fold, 0.7841
     },
 }
 
@@ -674,13 +690,13 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
     spine_1->spine_2: `rel_perjoint` leads outright and sits at its ceiling,
     because it drives spine_1 from the very row this edge is scored against.
     The DEFAULT does not: it interpolates 65% of the way to the chest, and
-    lands 0.957 against that 0.9996. That gap is the price of the
+    lands 0.947 against that 0.9996. That gap is the price of the
     distribution ruling and it is asserted, not mentioned.
 
     spine_2->neck: v15's landmark anchor (which the hybrid shares) has the
-    better MEAN, 0.8746 against 0.8515 -- and the worse tail, min 0.7793
-    against 0.8062, which is why it violates the floor five times and the
-    two relative mappings once each.
+    better MEAN, 0.8771 against 0.8511 -- and the worse tail, min 0.7793
+    against 0.8062, which is why it violates the floor six times and the
+    two relative mappings twice each.
 
     The default was chosen on the total chest-vs-pelvis error against the
     spine-zeroed captures (28.0 deg vs 39.3) and then on Scott's own 65/35
@@ -858,8 +874,8 @@ def test_the_v15_spine_is_only_scored_with_the_pelvis_it_ships_with(monkeypatch)
     the pelvis anchor in a way none of the other four mappings do (their
     spine_1 is a model row, absolute or root-relative, and their spine_2 is
     either a model row or a landmark anchor; all four are pelvis-independent
-    in WORLD terms). Pairing it with PELVIS_SOURCE_NPZ_ROOT costs it 9 extra
-    violations and drops its mean spine_1->spine_2 cosine 0.9850 -> 0.9531.
+    in WORLD terms). Pairing it with PELVIS_SOURCE_NPZ_ROOT costs it 11 extra
+    violations and drops its mean spine_1->spine_2 cosine 0.9859 -> 0.9512.
 
     That pairing cannot occur: a row with no `mhr_params_npz` blob takes v15
     AND takes the hip-line pelvis, both resolved from the same `mhr_rots is
@@ -892,7 +908,7 @@ def test_the_v15_spine_is_only_scored_with_the_pelvis_it_ships_with(monkeypatch)
                 if label == "spine_1->spine_2":
                     cos.append(c)
         counts[ps], means[ps] = below, float(np.mean(cos))
-    assert counts[PG.PELVIS_SOURCE_HIPS] == 7
-    assert counts[PG.PELVIS_SOURCE_NPZ_ROOT] == 16
-    assert means[PG.PELVIS_SOURCE_HIPS] == pytest.approx(0.9850, abs=0.002)
-    assert means[PG.PELVIS_SOURCE_NPZ_ROOT] == pytest.approx(0.9531, abs=0.002)
+    assert counts[PG.PELVIS_SOURCE_HIPS] == 8
+    assert counts[PG.PELVIS_SOURCE_NPZ_ROOT] == 19
+    assert means[PG.PELVIS_SOURCE_HIPS] == pytest.approx(0.9859, abs=0.002)
+    assert means[PG.PELVIS_SOURCE_NPZ_ROOT] == pytest.approx(0.9512, abs=0.002)

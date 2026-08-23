@@ -144,12 +144,14 @@ def test_mhr_curvature_is_non_monotonic_on_the_pike_row():
     # Positive control: the same measurement on a monotonic row.
     mono = _rots("1e6a7a60b4539a8fd09867d7e2fa3db6")
     assert _ang(_rel_delta(mono, MHR_SPINE2)) < _ang(_rel_delta(mono, MHR_SPINE3))
-    # ...and it is not rare. Eight of eighteen fixture rows are like the pike;
-    # it was seven of seventeen until 1c3ba88d (the crawl row appended for
-    # task-pelvis) joined, and that row is non-monotonic too.
+    # ...and it is not rare. Eleven of twenty-one fixture rows are like the
+    # pike; seven of seventeen until 1c3ba88d (the crawl row, task-pelvis)
+    # joined, eight of eighteen until task-relpeak's three flexion rows
+    # (crouch e622f027, fold d3359029, bridge b657df59) did on 2026-08-24 --
+    # all three of them non-monotonic by this same measurement too.
     bad = sum(_ang(_rel_delta(_rots(r), MHR_SPINE2)) > _ang(_rel_delta(_rots(r), MHR_SPINE3))
               for r in ROWS)
-    assert bad == 8, f"{bad}/{len(ROWS)} fixture rows non-monotonic, expected 8"
+    assert bad == 11, f"{bad}/{len(ROWS)} fixture rows non-monotonic, expected 11"
 
 
 def test_the_pike_row_bends_both_spine_bones_forward(monkeypatch):
@@ -199,7 +201,7 @@ def test_rel_total_keeps_rel_perjoints_chest_on_every_row(monkeypatch):
         d = _ang(QM.multiply(tot[I["spine_2"]], _conj(rel[I["spine_2"]])))
         assert d < 1e-9, f"{row_id[:8]}: chest moved {d:.3e} deg"
         moved.append(_ang(QM.multiply(tot[I["spine_1"]], _conj(rel[I["spine_1"]]))))
-    assert len(moved) == 18                                   # positive control
+    assert len(moved) == 21                                   # positive control
     assert min(moved) > 1.0, f"spine_1 barely moved on some row: min {min(moved):.4f} deg"
     assert max(moved) == pytest.approx(44.5, abs=1.0), max(moved)
 
@@ -276,7 +278,7 @@ def test_spine_1_takes_exactly_65_percent_of_the_local_bend(monkeypatch):
             a1, a2 = _ang(_local_delta(L, "spine_1")), _ang(_local_delta(L, "spine_2"))
             assert a1 + a2 > 5.0, f"{row_id[:8]}: {src} bend too small to divide"
             sink.append(a1 / (a1 + a2))
-    assert len(shares) == 18                                  # positive control
+    assert len(shares) == 21                                  # positive control
     assert max(abs(s - PG._SPINE1_SHARE) for s in shares) < 1e-9, \
         f"share range {min(shares):.9f}..{max(shares):.9f}"
     assert max(abs(s - PG._SPINE1_SHARE) for s in ref) > 0.1, \

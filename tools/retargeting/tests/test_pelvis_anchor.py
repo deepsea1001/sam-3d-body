@@ -190,15 +190,17 @@ def test_the_npz_anchor_lands_on_the_models_root_on_every_fixture_row(monkeypatc
     two, not the only two.
 
     Positive control in the same test: the construction this replaces
-    disagrees by a median 19.7 deg over the same eighteen rows, so a "0.0
-    everywhere" that came from a solve that never ran cannot pass."""
+    disagrees by a median 24.9 deg over the same twenty-one rows (19.7 over
+    the eighteen before task-relpeak's flexion rows joined -- deep folds are
+    where the hip-line heuristic is weakest), so a "0.0 everywhere" that came
+    from a solve that never ran cannot pass."""
     after, before = [], []
     for row_id in sorted(ROWS):
         after.append(_disagreement(PG.PELVIS_SOURCE_NPZ_ROOT, monkeypatch, row_id))
         before.append(_disagreement(PG.PELVIS_SOURCE_HIPS, monkeypatch, row_id))
-    assert len(after) == 18                                  # positive control
+    assert len(after) == 21                                  # positive control
     assert max(after) < 1e-9, f"worst {max(after):.3e} deg"
-    assert float(np.median(before)) == pytest.approx(19.7, abs=0.5), sorted(before)
+    assert float(np.median(before)) == pytest.approx(24.9, abs=0.5), sorted(before)
     assert max(before) == pytest.approx(65.90, abs=0.05)
 
 
@@ -231,7 +233,7 @@ def test_the_chest_relative_to_the_pelvis_is_bit_identical(monkeypatch):
                       _relative(Wn, "pelvis", "spine_1"))
         assert d1 < 1e-9, f"{row_id[:8]}: spine_1-vs-pelvis moved {d1:.3e} deg"
         moved.append(_between(Wh[I["pelvis"]], Wn[I["pelvis"]]))
-    assert len(moved) == 18                                  # positive control
+    assert len(moved) == 21                                  # positive control
     assert max(moved) == pytest.approx(65.90, abs=0.05), max(moved)
     assert float(np.median(moved)) > 5.0, float(np.median(moved))
 
@@ -273,7 +275,7 @@ def test_the_clavicle_relative_to_the_chest_moves_only_through_the_aim_cap(monke
                                     _relative(Wn, "spine_2", f"{side}_clavicle")))
             err_h.append(_dir_cos(Ph, T, f"{side}_clavicle", f"{side}_shoulder"))
             err_n.append(_dir_cos(Pn, T, f"{side}_clavicle", f"{side}_shoulder"))
-    assert len(changed) == 36                                # positive control
+    assert len(changed) == 42                                # positive control
     assert max(changed) > 1.0, "the aim correction did not move with the pelvis"
     assert max(changed) < 2 * PG._CLAV_AIM_CORRECTION_MAX_DEG + 4.1, max(changed)
     # ...and it moves the right way: the girdle lands NEARER its keypoints.
@@ -307,7 +309,7 @@ def test_every_limb_direction_is_bit_identical(monkeypatch):
                 n += 1
         # Positive control: the legs really did MOVE, they just did not turn.
         assert np.linalg.norm(Pn[I["left_knee"]] - Ph[I["left_knee"]]) > 1e-6
-    assert n == 8 * 18                                       # positive control
+    assert n == 8 * 21                                       # positive control
 
 
 def test_the_pelvis_to_hip_edge_is_the_accepted_trade(monkeypatch):
@@ -333,18 +335,19 @@ def test_the_pelvis_to_hip_edge_is_the_accepted_trade(monkeypatch):
         for side in ("left", "right"):
             before.append(_dir_cos(Ph, T, "pelvis", f"{side}_hip"))
             after.append(_dir_cos(Pn, T, "pelvis", f"{side}_hip"))
-    assert len(before) == 36                                 # positive control
+    assert len(before) == 42                                 # positive control
     # The old anchor holds this edge in a NARROW BAND -- 0.9665..0.9940, median
     # 0.9789 -- rather than at 1.0: the frame construction reproduces the hip
     # LINE exactly, but `pelvis->hip` is a different vector from any of its
     # three axes and the target hips do not sit on the reconstructed offset.
-    # The npz anchor gives that band up: median 0.9508, worst 0.6620 on the
-    # pike row, which is that row's 65.9 deg of root-vs-hip-line disagreement
+    # The npz anchor gives that band up: median 0.9400 (0.9508 before
+    # task-relpeak's three flexion rows joined), worst 0.6620 on the pike
+    # row, which is that row's 65.9 deg of root-vs-hip-line disagreement
     # showing up in the one edge that can see it.
     assert min(before) == pytest.approx(0.9665, abs=0.002), min(before)
     assert float(np.median(before)) == pytest.approx(0.9789, abs=0.002)
     assert min(after) == pytest.approx(0.6620, abs=0.002), min(after)
-    assert float(np.median(after)) == pytest.approx(0.9508, abs=0.002)
+    assert float(np.median(after)) == pytest.approx(0.9400, abs=0.002)
     assert float(np.median(after)) < float(np.median(before))
 
 
@@ -481,8 +484,10 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
     one frame. This is the honest positional summary that
     `pelvis->hip` alone is not.
 
-    Fixture (18 rows): median 0.1489 -> 0.0733, worst 0.2988 -> 0.1847,
-    better on 15 of 18 and never worse by more than 0.014.
+    Fixture (21 rows): median 0.1829 -> 0.0764, worst 0.2988 -> 0.1847,
+    better on 18 of 21 and never worse by more than 0.014 (18-row figures
+    were 0.1489 -> 0.0733 and 15 of 18; the three task-relpeak flexion rows
+    all improve).
     Corpus (1800): median 0.0871 -> 0.0574, p90 0.2163 -> 0.0850, better on
     1562 rows."""
     body = ["left_hip", "right_hip", "left_knee", "right_knee", "left_ankle",
@@ -510,11 +515,11 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
         T = rig_targets_from_mhr70(_kp(row_id))
         before.append(_rms(_positions(_at(PG.PELVIS_SOURCE_HIPS, monkeypatch, row_id)), T))
         after.append(_rms(_positions(_at(PG.PELVIS_SOURCE_NPZ_ROOT, monkeypatch, row_id)), T))
-    assert len(before) == 18                                 # positive control
-    assert float(np.median(before)) == pytest.approx(0.1489, abs=0.002)
-    assert float(np.median(after)) == pytest.approx(0.0733, abs=0.002)
+    assert len(before) == 21                                 # positive control
+    assert float(np.median(before)) == pytest.approx(0.1829, abs=0.002)
+    assert float(np.median(after)) == pytest.approx(0.0764, abs=0.002)
     assert max(before) == pytest.approx(0.2988, abs=0.002)   # the pike row
     assert max(after) == pytest.approx(0.1847, abs=0.002)
     improved = sum(a < b for a, b in zip(after, before))
-    assert improved == 15, improved
+    assert improved == 18, improved
     assert max(a - b for a, b in zip(after, before)) < 0.015
