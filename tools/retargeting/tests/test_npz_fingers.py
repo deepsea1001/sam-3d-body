@@ -602,9 +602,11 @@ def test_the_movement_checks_name_the_bone_an_orthogonalised_reference_kills():
     assert dead == {name: pytest.approx(2.36, abs=0.01)}, dead     # comfortably under the 5.0 deg floor
     # Re-pinned 2026-08-22 from 3.15 (six rows) to 2.78: the fixture gained
     # the ten spine captures, so this median is taken over sixteen rows now.
-    # The dev-row number above is unchanged, which is the control that only
-    # the POPULATION moved and not the measurement.
-    assert quiet == {name: pytest.approx(2.78, abs=0.01)}, quiet   # median across all 16 rows
+    # Re-pinned again 2026-08-23 to 2.68, when 0693dd37 (the non-monotonic
+    # pike fold behind SPINE_SOURCE_REL_TOTAL) made it seventeen. The dev-row
+    # number above is unchanged through BOTH re-pins, which is the control
+    # that only the POPULATION moved and not the measurement.
+    assert quiet == {name: pytest.approx(2.68, abs=0.01)}, quiet   # median across all 17 rows
 
 
 def test_no_rotations_leaves_all_forty_finger_bones_at_rest():
