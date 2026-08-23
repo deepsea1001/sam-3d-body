@@ -295,8 +295,15 @@ def test_scott_s_overshoot_rows_get_their_shoulder_balls_back(monkeypatch):
         crouch  left 22.08 -> 12.27   right 18.81 -> 25.35
         fold    left 14.64 -> 15.88   right  6.68 -> 15.26
 
+    RE-PINNED AGAIN 2026-08-24 (task-relpeak), same mechanism one ruling
+    later: the default chest now carries the column's PEAK, so the crouch --
+    a non-monotonic column, peak 61.4 deg vs end 50.1 -- moved a second time
+    (left 12.27 -> 12.76, right 25.35 -> 23.49). The fold row's column is
+    monotonic, its chest is bit-unchanged, and all four of its numbers held
+    without re-pinning -- the control that only the peak moved.
+
     A blanket `after < 8.0` was the old bound and it no longer holds: crouch
-    RIGHT now starts 25.35 out, saturates the 15 deg cap and lands 10.35. It
+    RIGHT starts 23.49 out, saturates the 15 deg cap and lands 8.49. It
     is NOT weakened to fit -- each of the four is pinned at its measured value
     instead, so any further movement in either direction fails here.
 
@@ -306,8 +313,9 @@ def test_scott_s_overshoot_rows_get_their_shoulder_balls_back(monkeypatch):
     rather than removing it. Corpus-wide the change is nonetheless an
     improvement in the TAIL, which is where the complaint lives: over 3600
     clavicles, p90 12.04 -> 9.45 deg, max 26.02 -> 20.45, and the count above
-    8 deg falls 934 -> 554."""
-    want = {(CROUCH, "left"): (12.27, 0.00), (CROUCH, "right"): (25.35, 10.35),
+    8 deg falls 934 -> 554 (task-pelvis corpus figures, measured under the
+    then-default rel_total)."""
+    want = {(CROUCH, "left"): (12.76, 0.00), (CROUCH, "right"): (23.49, 8.49),
             (FOLD, "left"): (15.88, 0.88), (FOLD, "right"): (15.26, 0.26)}
     for rid in (CROUCH, FOLD):
         t0, L0 = _solve(rid, cap=0.0, monkeypatch=monkeypatch)
@@ -523,10 +531,13 @@ def test_the_symmetric_pose_s_shoulder_girdle_gets_MORE_mirrored(monkeypatch):
     # from 6.8 to 12.4 deg would still clear `g1 < 0.5 * g0`. Pin the values
     # themselves, RED-verified: perturbing either constant fails this exact
     # assertion before the real numbers are restored.
-    assert g0 == pytest.approx(23.03, abs=0.3), \
-        f"transfer girdle drifted: {g0:.2f} vs the pinned 23.03"
-    assert g1 == pytest.approx(6.78, abs=0.3), \
-        f"corrected girdle drifted: {g1:.2f} vs the pinned 6.78"
+    # Re-pinned 2026-08-24 (task-relpeak, from 23.03/6.78): this row's column
+    # is mildly non-monotonic, so the peak chest moved the whole girdle a
+    # little -- and toward mirrored on both counts.
+    assert g0 == pytest.approx(21.83, abs=0.3), \
+        f"transfer girdle drifted: {g0:.2f} vs the pinned 21.83"
+    assert g1 == pytest.approx(5.64, abs=0.3), \
+        f"corrected girdle drifted: {g1:.2f} vs the pinned 5.64"
 
     # ...and the local numbers, pinned rather than argued away. If the cap is
     # ever lowered these move together, which is the point.
@@ -539,8 +550,13 @@ def test_the_symmetric_pose_s_shoulder_girdle_gets_MORE_mirrored(monkeypatch):
                   f"up {v[1]:+.4f}  fwd {v[2]:+.4f}")
     assert fwd[("transfer", "left")] == pytest.approx(+0.052, abs=0.01)
     assert fwd[("transfer", "right")] == pytest.approx(-0.017, abs=0.01)
-    assert fwd[("corrected", "left")] == pytest.approx(+0.391, abs=0.02)
-    assert fwd[("corrected", "right")] == pytest.approx(-0.425, abs=0.02)
+    # The corrected pair re-pinned 2026-08-24 (task-relpeak, from
+    # +0.391/-0.425): the correction aims through the peak chest now. The
+    # TRANSFER pair above did not move -- the transfer's local is
+    # chest-relative and cancels the chest change algebraically, which is
+    # the same invariant test_pelvis_anchor.py asserts against the pelvis.
+    assert fwd[("corrected", "left")] == pytest.approx(+0.411, abs=0.02)
+    assert fwd[("corrected", "right")] == pytest.approx(-0.399, abs=0.02)
 
 
 def test_the_rig_s_own_rest_girdle_is_the_asymmetric_thing():
@@ -671,8 +687,12 @@ def test_the_clavicle_correction_leaves_the_spine_alone(monkeypatch):
         "positive control: the correction did nothing on this row"
 
     # ...and the flexion numbers themselves, in the captures' own frame.
+    # 56.7/30.2 is the DEFAULT's flexion since task-relpeak -- 0.65/0.35 of
+    # the pike column's 87.4 deg peak (test_spine_rel_peak.py); it was
+    # 43.2/22.8 of the 66.5 deg end while rel_total shipped, and
+    # test_spine_rel_total.py still pins those under that named source.
     right = np.array([1.0, 0.0, 0.0])
-    for name, want in (("spine_1", 43.2), ("spine_2", 22.8)):
+    for name, want in (("spine_1", 56.7), ("spine_2", 30.2)):
         d = QM.multiply(np.asarray(L1[I[name]], float),
                         QM.conjugate(RIG.rest_local_q[I[name]]))
         d = np.asarray(d, float)

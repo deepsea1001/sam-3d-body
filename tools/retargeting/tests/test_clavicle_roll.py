@@ -567,10 +567,13 @@ def test_the_arm_still_lands_on_its_targets():
     task-clavcorrect then bounded it: the transferred clavicle is aimed back
     at the keypoint by at most `_CLAV_AIM_CORRECTION_MAX_DEG` = 15. So this
     edge is much closer to exact than it was, and the bound TIGHTENS here
-    rather than loosening. Measured over these sixteen rows:
+    rather than loosening. Measured over the fixture rows (21 since
+    task-relpeak, whose peak chest also moved the corrected tail 0.9470 ->
+    0.9641 -- nearer the keypoints, same direction as every relpeak
+    position number):
 
         f07064f (transfer only)   median cosine 0.9464, worst 0.8315 (33.7 deg)
-        with the bounded aim       median cosine 0.9978, worst 0.9470 (18.7 deg)
+        with the bounded aim       median cosine 0.9988, worst 0.9641 (15.4 deg)
 
     Pinned as a REGRESSION BOUND at 0.90, named -- not as an aspiration, and
     never applied to the fallback path where the old guarantee still holds.
@@ -612,4 +615,4 @@ def test_the_arm_still_lands_on_its_targets():
     # The split is the point, so assert the two paths really are different --
     # otherwise the transfer's looser floor would be measuring the fallback.
     assert seen["fallback"].min() > 0.9999
-    assert seen["transfer"].min() == pytest.approx(0.9470, abs=0.01)
+    assert seen["transfer"].min() == pytest.approx(0.9641, abs=0.01)

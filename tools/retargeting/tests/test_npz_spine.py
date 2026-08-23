@@ -416,9 +416,20 @@ def test_rel_perjoint_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pe
             f"under the npz pelvis ({gaps[(PG.PELVIS_SOURCE_NPZ_ROOT, bone)]:.3e})")
 
 
-def test_default_chest_is_c_spine3_relative_and_spine_1_is_its_65_percent():
-    """The DEFAULT's contract, in matrices, independent of the solver's
+def test_rel_total_chest_is_c_spine3_relative_and_spine_1_is_its_65_percent(
+        monkeypatch):
+    """REL_TOTAL's contract, in matrices, independent of the solver's
     quaternion order and sign conventions.
+
+    This WAS the default's contract until 2026-08-24, when the default moved
+    to SPINE_SOURCE_REL_PEAK -- whose chest is an interior column sample, not
+    row 37, so this test now selects rel_total by name (the dev row's column
+    is non-monotonic by 10 deg, so under the new default the row-37 identity
+    below genuinely fails rather than passing vacuously). Kept, monkeypatched,
+    rather than shrunk: the mapping is still reachable, still the
+    one-constant revert, and its 65/35 half is the construction the default
+    still shares. The default's own contract is pinned in
+    test_spine_rel_peak.py.
 
     spine_2: D(pelvis) . Delta(root)^-1 . Delta(37) . W_rest(spine_2) --
     identical to the test above, because REL_TOTAL and REL_PERJOINT share
@@ -430,9 +441,10 @@ def test_default_chest_is_c_spine3_relative_and_spine_1_is_its_65_percent():
     bones' local angles come out 65/35 on every axis.
 
     Positive controls: rows 36 and 37 must both be visibly WRONG for
-    spine_1 here (row 36 is what the previous default used, and what a
+    spine_1 here (row 36 is what the pre-rel_total default used, and what a
     careless revert would leave behind), and the interpolation must be
     non-trivial on this row -- neither endpoint."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_TOTAL)
     R_pose = _rots(DEV_ROW)
     R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
@@ -591,13 +603,20 @@ def _spine_edge_cosines(row_id, source):
 #
 # The counts are the summary, over 42 edges (21 rows x 2) since task-relpeak's
 # three flexion rows joined the fixture on 2026-08-24 (36 edges when the crawl
-# row 1c3ba88d joined on 2026-08-23): the default (rel_total) violates
+# row 1c3ba88d joined on 2026-08-23): rel_total violates
 # 13 times (9 over the previous 18 rows), rel_perjoint
-# 2, the mapping v16 first shipped 7, the hybrid 6, v15 8. The default is
-# NOT the leader on this machine-side metric and was never chosen on it --
+# 2, the mapping v16 first shipped 7, the hybrid 6, v15 8. rel_total was
+# NOT the leader on this machine-side metric even while it was the default,
+# and was never chosen on it --
 # see test_where_the_default_leads... below, which asserts both halves.
+# The default since 2026-08-24 is SPINE_SOURCE_REL_PEAK, which is not in
+# this table: its chest deliberately overshoots the model's own c_spine3
+# wherever the column is non-monotonic, so scoring it against these
+# model-direction floors would gate the very overshoot it exists to
+# produce. Its contract and costs are pinned in test_spine_rel_peak.py.
 _SPINE_FLOOR_VIOLATIONS = {
-    # THE DEFAULT since 2026-08-23. Its spine_2->neck rows are rel_perjoint's,
+    # The default 2026-08-23 -> 2026-08-24 (superseded by rel_peak).
+    # Its spine_2->neck rows are rel_perjoint's,
     # bit for bit -- same chest. The eleven spine_1->spine_2 rows are the
     # PRICE of the 65/35 distribution ruling, and every one of them is a row
     # where the model bends its own mid-back well past 65% of its total
@@ -689,9 +708,10 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
 
     spine_1->spine_2: `rel_perjoint` leads outright and sits at its ceiling,
     because it drives spine_1 from the very row this edge is scored against.
-    The DEFAULT does not: it interpolates 65% of the way to the chest, and
-    lands 0.947 against that 0.9996. That gap is the price of the
-    distribution ruling and it is asserted, not mentioned.
+    `rel_total` (the default until task-relpeak; the shipped rel_peak
+    default shares its 65% construction) does not: it interpolates 65% of
+    the way to the chest, and lands 0.947 against that 0.9996. That gap is
+    the price of the distribution ruling and it is asserted, not mentioned.
 
     spine_2->neck: v15's landmark anchor (which the hybrid shares) has the
     better MEAN, 0.8771 against 0.8511 -- and the worse tail, min 0.7793

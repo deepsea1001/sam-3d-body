@@ -432,9 +432,17 @@ def test_the_corrected_local_pays_protraction_for_the_ball(monkeypatch):
     -3.7/+0.8/-7.8/-10.8 -- did NOT move by a single digit, on any of the four,
     because the clavicle TRANSFER is chest-relative and cancels the pelvis
     delta algebraically. That is the invariant test_pelvis_anchor.py asserts,
-    showing up here in four independently measured numbers."""
-    for rid, want in ((BICEPS, {"left": (18.47, 3.47, 7.8, 21.0, -3.7, -18.1),
-                                "right": (15.53, 0.53, 9.5, 19.3, +0.8, +15.2)}),
+    showing up here in four independently measured numbers.
+
+    RE-PINNED AGAIN 2026-08-24 (task-relpeak) with the same split one ruling
+    on: the biceps row's column is mildly non-monotonic, so its chest took
+    the peak and its aim/corrected columns moved (aims 18.47/15.53 ->
+    17.53/13.91); the standing row's column is monotonic and ALL SIX of its
+    numbers held without re-pinning. The cap-0 |local| and euler-Z columns
+    held on both rows -- the transfer's local cancels the chest change
+    exactly as it cancels the pelvis's."""
+    for rid, want in ((BICEPS, {"left": (17.53, 2.53, 7.8, 20.7, -3.7, -18.2),
+                                "right": (13.91, 0.00, 9.5, 18.4, +0.8, +14.1)}),
                       (STANDING, {"left": (23.63, 8.63, 9.1, 23.5, -7.8, -21.9),
                                   "right": (16.14, 1.14, 14.7, 4.8, -10.8, +2.3)})):
         t0, L0 = _solve(rid, cap=0.0, monkeypatch=monkeypatch)

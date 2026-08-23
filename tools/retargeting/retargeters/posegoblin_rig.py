@@ -71,12 +71,15 @@ the blob still take the v15 path, which is kept intact under `mhr_rots is
 None`.
 
 WHICH of the model's rotations, and in what frame, is a switch --
-`SPINE_SOURCE`, six named mappings, so every comparison behind the two
+`SPINE_SOURCE`, seven named mappings, so every comparison behind the three
 rulings stays reproducible instead of living in a scratch branch. The
-default takes the model's chest rotation RELATIVE TO ITS OWN ROOT, composes
-it onto the pelvis we actually solved, and splits that total 65/35 between
-the mannequin's two spine bones. See the block above `SPINE_SOURCE` for
-both rulings and what each costs.
+default takes the LARGEST rotation RELATIVE TO THE MODEL'S OWN ROOT found
+along its sampled spine column -- not the rotation at the column's end,
+which under-reports the curl wherever the column counter-rotates back, and
+it does so exactly on flexion -- composes that peak onto the pelvis we
+actually solved, and splits it 65/35 between the mannequin's two spine
+bones. See the block above `SPINE_SOURCE` for the rulings and what each
+costs.
 """
 from collections import Counter
 from dataclasses import dataclass
@@ -335,7 +338,7 @@ _MHR_CLAVICLE_ROW = {"left_clavicle": 74, "right_clavicle": 38}
 _CLAV_AIM_CORRECTION_MAX_DEG = 15.0
 
 # Where the mannequin's spine comes from when the caller supplies
-# `mhr_rots`. Four named mappings, one switch, so every comparison in the
+# `mhr_rots`. Seven named mappings, one switch, so every comparison in the
 # task-6b report stays reproducible instead of living in a scratch branch:
 SPINE_SOURCE_MHR = "mhr"        # v16 task 4: spine_1 <- Delta(35), spine_2 <- Delta(37)
 SPINE_SOURCE_HYBRID = "hybrid"  # spine_1 <- Delta(36); spine_2 keeps v15's
@@ -355,12 +358,22 @@ SPINE_SOURCE_REL_PERJOINT = "rel_perjoint"
                                 # ITS OWN ROOT, composed onto the pelvis we
                                 # actually solved -- see _anchor_deltas.
 SPINE_SOURCE_REL_TOTAL = "rel_total"
-                                # THE DEFAULT. REL_PERJOINT's chest exactly --
+                                # REL_PERJOINT's chest exactly --
                                 # the same root-relative Delta(37) composed
                                 # onto our pelvis -- with that TOTAL split
                                 # 65/35 across the two bones instead of
                                 # spine_1 taking a second MHR row of its own.
                                 # See _anchor_deltas and the block below.
+SPINE_SOURCE_REL_PEAK = "rel_peak"
+                                # THE DEFAULT. REL_TOTAL's construction with
+                                # one change: the total is the LARGEST
+                                # root-relative rotation along the sampled
+                                # spine column (`_rel_peak_q`), not the
+                                # rotation at its end. The end under-reports
+                                # the column's curl wherever it
+                                # counter-rotates -- 27% of the motion
+                                # corpus, all of it flexion. See the block
+                                # below.
 
 # Which MHR row drives spine_1 under SPINE_SOURCE_REL_PERJOINT. 36
 # (c_spine2), not the 35 (c_spine1) v16 first shipped: the mannequin has two
@@ -371,11 +384,15 @@ SPINE_SOURCE_REL_TOTAL = "rel_total"
 # rest ceiling across all fifteen captures; row 35 reaches only 0.9593.
 SPINE_PERJOINT_SPINE1_ROW = 36
 
-# THE DEFAULT is SPINE_SOURCE_REL_TOTAL. Two separate rulings sit behind
-# it: WHICH TOTAL (task 6b, measured) and HOW IT IS DISTRIBUTED (Scott,
-# 2026-08-23, from a pose he corrected by hand). Reverting either is one
-# constant -- REL_TOTAL and REL_PERJOINT share their chest exactly, so
-# flipping between them changes the DISTRIBUTION and nothing else.
+# THE DEFAULT is SPINE_SOURCE_REL_PEAK. Three separate rulings sit behind
+# it: WHICH FRAME the total is read in (task 6b, measured), HOW IT IS
+# DISTRIBUTED (Scott, 2026-08-23, from a pose he corrected by hand), and
+# WHERE ALONG THE COLUMN it is read (task-relpeak, 2026-08-24, measured and
+# render-verified). Reverting any one is one constant -- REL_TOTAL and
+# REL_PERJOINT share their chest exactly, so flipping between them changes
+# the DISTRIBUTION and nothing else, and REL_PEAK is REL_TOTAL with the
+# total read at the column's peak instead of its end, so flipping between
+# THOSE changes where the total is read and nothing else.
 #
 # --- the distribution, and the defect that settled it -------------------
 #
@@ -456,11 +473,42 @@ SPINE_PERJOINT_SPINE1_ROW = 36
 # ruled so on 2026-08-23, which is what promotes REL_TOTAL over REL_PERJOINT
 # above. `provenance` on every entry in
 # tests/fixtures/ground_truth_captures.json says which set a capture is in.
-SPINE_SOURCE = SPINE_SOURCE_REL_TOTAL
+#
+# --- the peak (task-relpeak, 2026-08-24) --------------------------------
+#
+# REL_TOTAL fixed extension and left forward FLEXION rendering too upright.
+# Measured cause: MHR's spine column is NON-MONOTONIC in flexion. On the
+# pike fixture row 0693dd37 the cumulative root-relative rotation along
+# root, c_spine0, c_spine1, c_spine2, c_spine3 is 0, 41.9, 79.0, 87.8,
+# 66.5 deg -- the column curls to 87.8 and counter-rotates 21 deg back by
+# its end, and the END is all REL_TOTAL reads. 490 of the 1800-row motion
+# corpus (27.2%) are like it, every one a flexion row; extension is
+# monotonic (end == peak), which is why arches looked right all along. The
+# mannequin amplifies what the end drops: its chest segment (spine_2->neck)
+# is 53% of its whole column, so a chest that stops at 66.5 deg reads as an
+# upright back no matter what spine_1 does below it.
+#
+# The peak reads the column's real curl where the end orientation
+# under-reports it: `_rel_peak_q` samples the root-relative rotation at 33
+# uniform arc positions along the column (slerped between the cumulative
+# deltas at the five column joints, arc positions from the committed rest
+# fixture -- see _spine_column) and takes the sample with the LARGEST
+# angle, ties to the largest t. By construction peak angle >= end angle,
+# and a monotonic column lands within sampling resolution of REL_TOTAL
+# (fixture: fold 67.0 vs 66.9 deg, bridge 33.1 vs 31.4). Render-verified on
+# the pike, crouch and fold rows before this shipped.
+#
+# What it costs, stated plainly: the chest is no longer the model's own
+# c_spine3 orientation -- spine_2's world deliberately overshoots it by
+# exactly the counter-rotation the end threw away, so the spine_2->neck
+# machine edge degrades on non-monotonic rows. That trade is the point: the
+# eye reads the curl, and the curl is what the end was dropping.
+SPINE_SOURCE = SPINE_SOURCE_REL_PEAK
 
 _SPINE_SOURCES = frozenset({SPINE_SOURCE_MHR, SPINE_SOURCE_HYBRID,
                             SPINE_SOURCE_V15, SPINE_SOURCE_REAL_TOTAL,
-                            SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL})
+                            SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL,
+                            SPINE_SOURCE_REL_PEAK})
 
 
 # Where the pelvis's WORLD ORIENTATION comes from. Same switch shape as
@@ -552,6 +600,81 @@ def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
     return QuaternionMath.multiply(
         QuaternionMath.from_matrix(np.asarray(mhr_rots, float)[row]),
         QuaternionMath.conjugate(load_mhr_rest()["q_wxyz"][row]))
+
+
+# 33 samples put neighbours ~0.025 apart in arc fraction -- fine enough that
+# a peak landing between two samples costs under half a degree on the worst
+# fixture row (87.4 sampled against 87.8 at the c_spine2 node itself), and
+# the monotonic-column agreement with SPINE_SOURCE_REL_TOTAL stays inside
+# the 2-3 deg acceptance bands.
+_SPINE_PEAK_SAMPLES = 33
+
+_SPINE_COLUMN: dict | None = None
+
+
+def _spine_column() -> dict:
+    """The MHR spine column the peak is sampled along, resolved once.
+
+    Rows are looked up by NAME in the rest fixture -- root, c_spine0,
+    c_spine1, c_spine2, c_spine3, plus c_neck -- never hardcoded, so a
+    re-extracted fixture that reorders joints moves this with it. `arc` is
+    each column joint's cumulative rest segment length from `rest_p_cm`,
+    normalized by the full root->c_neck arc, so c_spine3 sits at its TRUE
+    fraction of the column (0.812 on the committed fixture: the c_spine3->
+    c_neck segment is real spine and the peak search must not pretend the
+    column ends at 1.0). Module-level singleton like `load_mhr_rest`, whose
+    cached dict this derives from.
+
+    Returns `{"rows": [5 ints], "neck_row": int, "arc": (5,) ndarray}`.
+    """
+    global _SPINE_COLUMN
+    if _SPINE_COLUMN is None:
+        rest = load_mhr_rest()
+        names = rest["names"]
+        rows = [names.index(n) for n in
+                ("root", "c_spine0", "c_spine1", "c_spine2", "c_spine3")]
+        neck = names.index("c_neck")
+        p = rest["rest_p_cm"]
+        cum = [0.0]
+        for a, b in zip(rows, rows[1:] + [neck]):
+            cum.append(cum[-1] + float(np.linalg.norm(p[b] - p[a])))
+        _SPINE_COLUMN = {
+            "rows": rows,
+            "neck_row": neck,
+            "arc": np.asarray(cum[:-1], float) / cum[-1],
+        }
+    return _SPINE_COLUMN
+
+
+def _rel_peak_q(mhr_rots: np.ndarray) -> np.ndarray:
+    """The LARGEST root-relative rotation along the spine column, [w,x,y,z].
+
+    MHR's column is non-monotonic on 27% of the motion corpus -- it curls
+    past its own end orientation and counter-rotates back, exactly on
+    flexion -- so the end (c_spine3, what SPINE_SOURCE_REL_TOTAL reads)
+    under-reports the curl there. This reconstructs the column as a
+    piecewise geodesic through the cumulative root-relative deltas at the
+    five column joints (`cum_j = conj(Delta(root)) . Delta(j)`, identity at
+    the root), samples it at `_SPINE_PEAK_SAMPLES` uniform arc positions
+    over [0, arc(c_spine3)], and returns the sample with the largest
+    rotation angle. Ties go to the LAST sample (largest t), so a flat or
+    monotonic column returns the end sample -- which IS rel_total's
+    quantity, to slerp-endpoint float noise.
+    """
+    col = _spine_column()
+    arc = col["arc"]
+    root_c = QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, col["rows"][0]))
+    cums = [np.array([1.0, 0.0, 0.0, 0.0])]
+    cums += [QuaternionMath.multiply(root_c, _mhr_delta_q(mhr_rots, j))
+             for j in col["rows"][1:]]
+    peak, peak_angle = cums[0], -1.0
+    for t in np.linspace(0.0, arc[-1], _SPINE_PEAK_SAMPLES):
+        k = min(int(np.searchsorted(arc, t, side="right")) - 1, len(arc) - 2)
+        q = _slerp(cums[k], cums[k + 1], (t - arc[k]) / (arc[k + 1] - arc[k]))
+        angle = 2.0 * float(np.arctan2(np.linalg.norm(q[1:]), abs(q[0])))
+        if angle >= peak_angle:
+            peak, peak_angle = q, angle
+    return peak
 
 
 def fk_world_orientations(rig: Rig, local_q: dict) -> dict:
@@ -1095,8 +1218,9 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             f"Falling through to v15 on a typo would ship a different spine than "
             f"the constant names, undetectably.")
     pv0 = li["pelvis"]
-    if source in (SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL) and pv0 in A:
-        # RELATIVE, both of them, and they share this chest EXACTLY.
+    if source in (SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL,
+                  SPINE_SOURCE_REL_PEAK) and pv0 in A:
+        # RELATIVE, all three of them.
         #
         # SPINE_SOURCE_MHR applies Delta(row) as an absolute world rotation
         # while our pelvis is anchored independently from the hip keypoints
@@ -1109,15 +1233,24 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
         # model's root-relative rotation onto OUR pelvis removes that
         # failure mode by construction.
         #
-        # spine_2 is that composition at c_spine3 under BOTH mappings, from
-        # this one expression, so the total chest-vs-pelvis rotation -- the
+        # REL_PERJOINT and REL_TOTAL read that composition at c_spine3, from
+        # one expression, so the total chest-vs-pelvis rotation -- the
         # metric that chose the relative frame -- and everything hanging off
         # spine_2 (the neck, both clavicles, and the shoulders through them)
-        # are bit-identical between them. Only the DISTRIBUTION differs.
+        # are bit-identical between THOSE two; only the distribution
+        # differs. REL_PEAK reads the column's PEAK instead: the same
+        # root-relative frame, sampled along the whole column, because the
+        # end alone under-reports the curl wherever the column
+        # counter-rotates -- 27% of the corpus, all flexion. On a monotonic
+        # column the peak IS the end sample and the three chests agree to
+        # sampling resolution. See the SPINE_SOURCE block and _rel_peak_q.
         root_d = QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_ROOT))
-        chest = QuaternionMath.multiply(
-            A[pv0], QuaternionMath.multiply(root_d,
-                                            _mhr_delta_q(mhr_rots, _MHR_SPINE_2)))
+        if source == SPINE_SOURCE_REL_PEAK:
+            chest = QuaternionMath.multiply(A[pv0], _rel_peak_q(mhr_rots))
+        else:
+            chest = QuaternionMath.multiply(
+                A[pv0], QuaternionMath.multiply(root_d,
+                                                _mhr_delta_q(mhr_rots, _MHR_SPINE_2)))
         A[s2] = chest
         if source == SPINE_SOURCE_REL_PERJOINT:
             # spine_1 takes its OWN MHR row, c_spine2. Faithful to the
@@ -1130,14 +1263,16 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                 A[pv0], QuaternionMath.multiply(
                     root_d, _mhr_delta_q(mhr_rots, SPINE_PERJOINT_SPINE1_ROW)))
         else:
-            # THE DEFAULT: spend the same total the way the rig itself
-            # does. A geodesic split puts both bones on ONE axis, so
-            # spine_1 takes `_SPINE1_SHARE` of the angle and spine_2 the
-            # rest -- flexion, lateral bend and twist alike, which is what
-            # Scott's spine-zeroed captures measure (0.650 +/- 0.002 across
-            # every axis). Both bones then bend the same way, always; a
-            # non-monotonic model column has nowhere to express itself, and
-            # that is the point rather than a loss.
+            # REL_TOTAL and REL_PEAK (the default): spend the total the way
+            # the rig itself does. A geodesic split puts both bones on ONE
+            # axis, so spine_1 takes `_SPINE1_SHARE` of the angle and
+            # spine_2 the rest -- flexion, lateral bend and twist alike,
+            # which is what Scott's spine-zeroed captures measure (0.650 +/-
+            # 0.002 across every axis). Both bones then bend the same way,
+            # always; a non-monotonic column cannot express its
+            # counter-rotation in the two bones' SHAPE -- under the peak its
+            # curl magnitude survives into the total instead, which is the
+            # division of labour on purpose.
             #
             # NOT the swing-only split below: that one deliberately keeps
             # TWIST at the chest because v15's total is a landmark

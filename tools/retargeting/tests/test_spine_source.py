@@ -17,7 +17,15 @@ once Scott ruled on the distribution (2026-08-23):
     SPINE_SOURCE_REL_PERJOINT  each bone takes its own MHR row, root-relative,
                                composed onto the pelvis we solved
     SPINE_SOURCE_REL_TOTAL     the same chest as REL_PERJOINT, split 65/35
-                               across the two bones  -- THE DEFAULT
+                               across the two bones
+
+...and a seventh when the flexion defect was root-caused (task-relpeak,
+2026-08-24):
+
+    SPINE_SOURCE_REL_PEAK      REL_TOTAL's construction, but the total is the
+                               LARGEST root-relative rotation along the
+                               sampled column, not the rotation at its end
+                               -- THE DEFAULT (see test_spine_rel_peak.py)
 
 Which one SHIPS is not settled here and these tests deliberately do not
 settle it: the hand-posed captures were authored on top of a v15-applied
@@ -84,30 +92,31 @@ def _world(local_q):
     return fk_world_orientations(RIG, {**RIG.rest_local_q, **local_q})
 
 
-def test_default_is_the_relative_total_mapping():
-    """The default is pinned, and pinned to the relative TOTAL: the chest
-    that measured best on the spine-zeroed captures (28.0 deg mean total
-    error against v15's 39.3 and the originally-shipped absolute mapping's
-    38.0), distributed 65/35 the way Scott's own rig control distributes it.
+def test_default_is_the_relative_peak_mapping():
+    """The default is pinned, and pinned to the relative PEAK: the same
+    root-relative chest frame and 65/35 distribution the 2026-08-23 rulings
+    settled, reading the column's LARGEST rotation instead of its end.
 
-    Re-pinned 2026-08-23 from SPINE_SOURCE_REL_PERJOINT, which shares this
-    chest exactly and differs only in the distribution -- and which drove
-    spine_2 into 20.9 deg of EXTENSION on a forward fold wherever the
-    model's own curvature is non-monotonic (tests/test_spine_rel_total.py).
-    `SPINE_PERJOINT_SPINE1_ROW` is pinned alongside it because REL_PERJOINT
-    is still reachable, still tested, and still the one-constant revert.
+    Re-pinned 2026-08-24 from SPINE_SOURCE_REL_TOTAL (task-relpeak): the end
+    under-reports the column's curl on every non-monotonic flexion row --
+    21 deg on the pike fold -- which is the measured cause of forward folds
+    rendering too upright while extension was right. Re-pinned 2026-08-23
+    before that from SPINE_SOURCE_REL_PERJOINT, which shares rel_total's
+    chest and differs only in the distribution. Both stay reachable, still
+    tested, and each is still a one-constant revert.
 
     A default that drifts silently is exactly what this pin exists to
     stop."""
-    assert PG.SPINE_SOURCE == PG.SPINE_SOURCE_REL_TOTAL
+    assert PG.SPINE_SOURCE == PG.SPINE_SOURCE_REL_PEAK
     assert PG.SPINE_PERJOINT_SPINE1_ROW == 36
     assert PG._SPINE1_SHARE == 0.65
     assert {PG.SPINE_SOURCE_MHR, PG.SPINE_SOURCE_HYBRID, PG.SPINE_SOURCE_V15,
             PG.SPINE_SOURCE_REAL_TOTAL, PG.SPINE_SOURCE_REL_PERJOINT,
-            PG.SPINE_SOURCE_REL_TOTAL} == \
-        {"mhr", "hybrid", "v15", "real_total", "rel_perjoint", "rel_total"}
+            PG.SPINE_SOURCE_REL_TOTAL, PG.SPINE_SOURCE_REL_PEAK} == \
+        {"mhr", "hybrid", "v15", "real_total", "rel_perjoint", "rel_total",
+         "rel_peak"}
     assert PG._SPINE_SOURCES == {"mhr", "hybrid", "v15", "real_total",
-                                 "rel_perjoint", "rel_total"}
+                                 "rel_perjoint", "rel_total", "rel_peak"}
 
 
 def test_unknown_spine_source_raises(monkeypatch):
@@ -386,8 +395,11 @@ def test_every_source_is_a_different_spine(monkeypatch):
 
     That is now a property OF THE PELVIS ANCHOR, and both cases are asserted.
 
-    Under PELVIS_SOURCE_HIPS all fifteen pairs are distinct, as they always
-    were. Under the shipped PELVIS_SOURCE_NPZ_ROOT some of them merge, and
+    Under PELVIS_SOURCE_HIPS all twenty-one pairs are distinct, as the
+    fifteen always were before rel_peak joined (its chest is an interior
+    sample no other mapping reads, so it merges with nothing on a
+    non-monotonic row like this one). Under the shipped
+    PELVIS_SOURCE_NPZ_ROOT some of them merge, and
     they merge for a reason that is arithmetic rather than accidental: with
     `A[pelvis] == Delta(root)`, every RELATIVE mapping's
     `A[pelvis] . conj(Delta(root)) . Delta(row)` collapses to `Delta(row)` --
@@ -410,7 +422,7 @@ def test_every_source_is_a_different_spine(monkeypatch):
     hips = _spines(PG.PELVIS_SOURCE_HIPS)
     npz = _spines(PG.PELVIS_SOURCE_NPZ_ROOT)
     pairs = [(a, b) for a in hips for b in hips if a < b]
-    assert len(pairs) == 15                                       # positive control
+    assert len(pairs) == 21                                       # positive control
     for a, b in pairs:
         d = _quat_deg(hips[a][0], hips[b][0])
         assert d > 1.0, f"{a} and {b} put spine_1 {d:.4f} deg apart -- not distinct"
@@ -429,6 +441,6 @@ def test_every_source_is_a_different_spine(monkeypatch):
     assert _merged(npz, 1) - _merged(hips, 1) == {("mhr", "rel_perjoint"),
                                                   ("mhr", "rel_total")}
     assert _merged(hips, 1) - _merged(npz, 1) == set()
-    # ...and 14 of 15 still differ at spine_1, so this is a NAMED collapse and
+    # ...and 20 of 21 still differ at spine_1, so this is a NAMED collapse and
     # not a spine that stopped varying with the switch.
-    assert len(pairs) - len(_merged(npz, 0)) == 14
+    assert len(pairs) - len(_merged(npz, 0)) == 20
