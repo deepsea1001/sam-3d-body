@@ -146,15 +146,19 @@ def test_the_crouch_row_reads_its_peak_too(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 2. Monotonic columns land on rel_total, within sampling resolution.
+# 2. Near-monotonic columns land on rel_total, within sampling resolution.
 # --------------------------------------------------------------------------
 
 def test_monotonic_columns_land_within_sampling_resolution_of_rel_total(
         monkeypatch):
-    """Where the column does NOT counter-rotate, the peak IS (near) the end,
+    """Where the column barely counter-rotates, the peak IS (near) the end,
     so rel_peak must reproduce rel_total's total -- the fold within 2 deg,
-    the bridge (an EXTENSION row: arches are monotonic, which is why
-    extension always looked right) within 3.
+    the bridge within 3. The bridge is an EXTENSION row: arches are
+    monotonic as a family, which is why extension always looked right, but
+    this row itself overshoots its end by 1.7 deg -- it counts in
+    test_spine_rel_total's 11/21 non-monotonic tally and takes the >1-deg
+    strict margin in the never-less test below -- so its wider tolerance
+    here is that measured 1.7, not slack.
 
     Positive control: the pike row differs by >15 deg under the same
     measurement, so agreement here is a property of these columns and not of
@@ -170,15 +174,17 @@ def test_monotonic_columns_land_within_sampling_resolution_of_rel_total(
 
 
 def test_a_strictly_monotonic_column_reproduces_the_end_sample(monkeypatch):
-    """Tie-break contract, on data: angle ties go to the LARGEST t, so a
-    column whose angle never decreases returns the END sample -- which sits
-    exactly on rel_total's root-relative row 37.
+    """The tie-break's VALUE-level consequence, on data: a column whose
+    angle never decreases returns the END sample -- which sits exactly on
+    rel_total's root-relative row 37.
 
     Two cases: a real monotonic fixture row (the peak is the endpoint sample
     itself, so the match is exact to slerp-endpoint float noise, far inside
     sampling resolution), and a synthetic CONSTANT column (every joint
-    carries the same delta -- every sample past c_spine0 ties, and the last
-    must win)."""
+    carries the same delta -- every sample past c_spine0 ties, and every
+    tying sample is BIT-IDENTICAL, so this case pins the returned value but
+    is blind to which index the argmax chose). The index-level tie-break
+    direction is pinned separately, below."""
     rots = _rots(MONO_ROW)
     peak = PG._rel_peak_q(rots)
     end = _rel_delta(rots, MHR_SPINE3)
@@ -197,6 +203,51 @@ def test_a_strictly_monotonic_column_reproduces_the_end_sample(monkeypatch):
     # Positive control: the pike's peak is nowhere near its end.
     assert _ang(QM.multiply(PG._rel_peak_q(_rots(PIKE_ROW)),
                             _conj(_rel_delta(_rots(PIKE_ROW), MHR_SPINE3)))) > 15.0
+
+
+def test_an_exact_angle_tie_is_broken_toward_the_end_sample(monkeypatch):
+    """The `>=` in `_rel_peak_q`'s scan, distinguished from `>` -- the
+    review found the test above cannot tell them apart, and no real column
+    can: between two DISTINCT rotations of equal angle the slerp angle dips
+    strictly in between (w(t) scales by 1/cos(h/2) > 1 mid-span), a
+    constant span yields bit-identical samples the argmax cannot be seen
+    choosing among, and the Delta pipeline's float noise
+    (from_matrix . conj(q_rest)) breaks any engineered bit-equal tie
+    between distinct values. So the tie is staged at the sampler seam
+    instead: `_slerp` is wrapped to substitute the returned draws -- a
+    45-deg X rotation for every draw but the last, a 45-deg Y rotation of
+    BIT-EQUAL angle for the last (same floats into 2*atan2(|v|, |w|)) --
+    while the loop's real cums, arc positions and call pattern stay live
+    (the wrapper still runs the real slerp on the real inputs first).
+
+    A first-wins argmax returns the X family; the shipped last-wins argmax
+    must return the Y draw, i.e. the END sample's position. RED-verified
+    against the comparator flipped to `>`: this test fails there while
+    every value-level case above stays green -- exactly the blind spot it
+    exists to close."""
+    s, c = np.sin(np.pi / 8), np.cos(np.pi / 8)
+    first = np.array([c, s, 0.0, 0.0])    # 45 deg about X
+    last = np.array([c, 0.0, s, 0.0])     # 45 deg about Y
+    # The tie is exact and the values are distinct -- both asserted, so the
+    # probe cannot rot into comparing a value against itself.
+    angle_of = lambda q: 2.0 * np.arctan2(np.linalg.norm(q[1:]), abs(q[0]))
+    assert angle_of(first) == angle_of(last)
+    assert not np.array_equal(first, last)
+
+    real_slerp = PG._slerp
+    draws = []
+
+    def staged(q0, q1, u):
+        real_slerp(q0, q1, u)             # the real path still runs
+        draws.append(u)
+        return last if len(draws) == PG._SPINE_PEAK_SAMPLES else first
+
+    monkeypatch.setattr(PG, "_slerp", staged)
+    peak = PG._rel_peak_q(_rots(MONO_ROW))
+    assert len(draws) == PG._SPINE_PEAK_SAMPLES          # positive control
+    assert np.array_equal(peak, last), (
+        "an exact angle tie was broken toward an EARLIER sample -- ties "
+        "must go to the largest t so a flat column reproduces the end")
 
 
 def test_the_peak_never_reads_less_than_the_end():

@@ -608,7 +608,7 @@ def _spine_edge_cosines(row_id, source):
 # 2, the mapping v16 first shipped 7, the hybrid 6, v15 8. rel_total was
 # NOT the leader on this machine-side metric even while it was the default,
 # and was never chosen on it --
-# see test_where_the_default_leads... below, which asserts both halves.
+# see test_where_rel_total_leads... below, which asserts both halves.
 # The default since 2026-08-24 is SPINE_SOURCE_REL_PEAK, which is not in
 # this table: its chest deliberately overshoots the model's own c_spine3
 # wherever the column is non-monotonic, so scoring it against these
@@ -702,9 +702,9 @@ def test_real_row_spine_directions_against_the_anchored_floors(source, monkeypat
         f"repaired violations {sorted(want - below)}")
 
 
-def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monkeypatch):
+def test_where_rel_total_leads_on_the_machine_side_and_where_it_does_not(monkeypatch):
     """The machine-side comparison as an assertion rather than a number in a
-    report, INCLUDING the two edges where the default does not win.
+    report, INCLUDING the two edges where rel_total does not win.
 
     spine_1->spine_2: `rel_perjoint` leads outright and sits at its ceiling,
     because it drives spine_1 from the very row this edge is scored against.

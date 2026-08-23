@@ -486,12 +486,16 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
 
     Fixture (21 rows, spine default rel_peak + the npz neck): median
     0.1913 -> 0.0735, worst 0.3902 -> 0.1022, better on 18 of 21 and never
-    worse by more than 0.016. The relpeak flip moved BOTH columns -- the
-    deeper chest curl costs the hip-line pelvis on its worst rows
-    (before-max 0.2988 -> 0.3902 across the two changes) and pays the
+    worse by more than 0.0152 (measured). The relpeak flip moved BOTH
+    columns -- the deeper chest curl costs the hip-line pelvis on its worst
+    rows (before-max 0.2988 -> 0.3902 across the two changes) and pays the
     shipped anchor back double (after-max 0.1847 -> 0.1022: the pike body
     finally lands on its keypoints); the npz neck then nudged every head
-    position on both paths. 18-row task-pelvis figures under rel_total and
+    position on both paths, and one row's regression crossed the old bound:
+    the worst per-row regression measured 0.014 under the Y-bridge (bounded
+    at 0.015) and 0.0152 with the npz neck, so the bound below is loosened
+    0.015 -> 0.016 for that measured value -- not weakened to fit a drift.
+    18-row task-pelvis figures under rel_total and
     the Y-bridge neck were 0.1489 -> 0.0733.
     Corpus (1800, task-pelvis, under rel_total): median 0.0871 -> 0.0574,
     p90 0.2163 -> 0.0850, better on 1562 rows."""
@@ -527,4 +531,6 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
     assert max(after) == pytest.approx(0.1022, abs=0.002)
     improved = sum(a < b for a, b in zip(after, before))
     assert improved == 18, improved
+    # Measured 0.0152 (task-relpeak neck swap; was 0.014 under the
+    # Y-bridge, bounded at 0.015), bounded at 0.016.
     assert max(a - b for a, b in zip(after, before)) < 0.016
