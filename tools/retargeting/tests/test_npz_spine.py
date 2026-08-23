@@ -550,14 +550,15 @@ def _spine_edge_cosines(row_id, source):
 # genuinely bend, arch and laterally flex the spine, directions the original
 # six never covered at all.
 #
-# The counts are the summary, over 34 edges (17 rows x 2) since 0693dd37
-# joined the fixture: the default (rel_total) violates 8 times, rel_perjoint
+# The counts are the summary, over 36 edges (18 rows x 2) since the crawl row
+# 1c3ba88d joined the fixture on 2026-08-23: the default (rel_total) violates
+# 9 times (8 over the previous 17 rows), rel_perjoint
 # once, the mapping v16 first shipped 5, the hybrid 5, v15 7. The default is
 # NOT the leader on this machine-side metric and was never chosen on it --
 # see test_where_the_default_leads... below, which asserts both halves.
 _SPINE_FLOOR_VIOLATIONS = {
     # THE DEFAULT since 2026-08-23. Its spine_2->neck row is rel_perjoint's,
-    # bit for bit -- same chest. The seven spine_1->spine_2 rows are the
+    # bit for bit -- same chest. The eight spine_1->spine_2 rows are the
     # PRICE of the 65/35 distribution ruling, and every one of them is a row
     # where the model bends its own mid-back well past 65% of its total
     # (0693dd37 is the extreme: |rel(36)| 87.8 against a 66.5 total, so a
@@ -566,6 +567,10 @@ _SPINE_FLOOR_VIOLATIONS = {
     # the total the way Scott's rig does; he chose the split.
     "rel_total": {
         ("0693dd37", "spine_1->spine_2"),   # deep pike fold, 0.7336
+        ("1c3ba88d", "spine_1->spine_2"),   # crawl, 0.8289 -- the row the
+                                            # npz pelvis anchor was measured
+                                            # on; its MHR column is
+                                            # non-monotonic like the pike's
         ("38608eb8", "spine_1->spine_2"),   # robert-crouch, 0.8992
         ("3b66ffdf", "spine_1->spine_2"),   # deep-forward-fold, 0.9258
         ("4fe66c92", "spine_1->spine_2"),   # forward-fold, 0.9687
@@ -659,7 +664,7 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
     assert lead == "rel_perjoint", f"{lead} leads spine_1->spine_2: {stats}"
     assert stats["rel_perjoint"]["spine_1->spine_2"][0] > 0.999      # measured 0.9996
     # The default's cost on that edge, pinned. It is not the leader here.
-    assert stats["rel_total"]["spine_1->spine_2"][0] == pytest.approx(0.957, abs=0.005)
+    assert stats["rel_total"]["spine_1->spine_2"][0] == pytest.approx(0.950, abs=0.005)
     assert stats["rel_total"]["spine_1->spine_2"][1] == pytest.approx(0.734, abs=0.005)
 
     # spine_2->neck: better mean for the landmark anchor, worse worst case.

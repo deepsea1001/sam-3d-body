@@ -1,4 +1,4 @@
-"""Byte-identity re-extraction control for the non-monotonic pike row.
+"""Byte-identity re-extraction control for EVERY row in mhr_npz_rows.json.
 
 77dbfd2 ("feat(rig): commit the non-monotonic pike row to the npz fixture")
 appended row 0693dd37 to mhr_npz_rows.json on the strength of a control
@@ -8,11 +8,18 @@ No extraction script and no fixture-integrity test were committed alongside
 it -- `grep -rn "mhr_npz_rows"` across both repos finds consumers only -- so
 the one control that licensed appending row 17 was unreproducible from a
 checkout (task-reltotal-review.md SHOULD-FIX 2). This file is that control,
-committed: it re-derives the pike row's four fixture fields from the SAME
-corpus (review-rerun/motion/shards, motion-diverse-1k -- see the fixture's
-own "provenance" key) the row was originally pulled from, under the rounding
+committed: it re-derives each fixture row's four fields from the SAME corpus
+(review-rerun/motion/shards, motion-diverse-1k -- see the fixture's own
+"provenance" key) the rows were originally pulled from, under the rounding
 reverse-engineered from the committed values, and asserts the result is
-IDENTICAL to what 77dbfd2 committed.
+IDENTICAL to what is on disk.
+
+It covers ALL rows, not just the appended one, because that is precisely the
+claim each append is licensed by: row 18 (1c3ba88d, the crawl row behind the
+npz pelvis anchor, task-pelvis 2026-08-23) was appended only after all
+seventeen prior rows re-extracted byte-for-byte, exactly as row 17 was. A
+control that only ever re-checks the newest row could not have caught the
+append reformatting or perturbing an older one.
 
 The rounding was not guessed: kp70 and pred_joint_coords round to 6dp,
 joint_global_rots to 7dp, cam_t is unrounded (only the float32->float64
@@ -38,7 +45,10 @@ import numpy as np
 import pytest
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mhr_npz_rows.json"
+_FIXTURE_ROWS = json.loads(FIXTURE.read_text())["rows"]
+ROW_IDS = sorted(_FIXTURE_ROWS)
 PIKE_ROW_ID = "0693dd37755e0d6eb9012857f5e3b405"
+CRAWL_ROW_ID = "1c3ba88d8b32b3c20a458eb5512ee3f8"
 
 # Where to find the corpus (unset -> skip, the common case for any checkout
 # that isn't holding this scratch corpus) and the poseforge3d checkout that
@@ -94,20 +104,34 @@ else:
     _SKIP_REASON = ""
 
 
-def _extract_pike_row() -> dict[str, np.ndarray]:
-    """Re-extracts PIKE_ROW_ID's four fixture fields from the corpus.
+_CORPUS_ROWS: dict | None = None
+
+
+def _corpus_rows() -> dict:
+    """The corpus, read once per session and keyed by point_id -- 1800 rows
+    off five parquet shards is seconds, and this file asks for eighteen of
+    them."""
+    global _CORPUS_ROWS
+    if _CORPUS_ROWS is None:
+        rows = _READ_SHARDS(str(_CORPUS))
+        assert rows, f"read_shards returned nothing from {_CORPUS}"
+        _CORPUS_ROWS = {r["point_id"]: r for r in rows}
+    return _CORPUS_ROWS
+
+
+def _extract_row(row_id: str) -> dict[str, np.ndarray]:
+    """Re-extracts *row_id*'s four fixture fields from the corpus.
 
     kp70 <- mhr70_xyz reshaped (70,3), round 6dp. cam_t <- unrounded.
     joint_global_rots/pred_joint_coords <- decoded from the row's
     mhr_params_npz blob (np.savez_compressed), round 7dp / 6dp respectively.
     """
-    rows = _READ_SHARDS(str(_CORPUS))
-    by_id = {r["point_id"]: r for r in rows}
-    assert PIKE_ROW_ID in by_id, (
-        f"{PIKE_ROW_ID} not among {len(rows)} rows read from {_CORPUS} -- "
+    by_id = _corpus_rows()
+    assert row_id in by_id, (
+        f"{row_id} not among {len(by_id)} rows read from {_CORPUS} -- "
         f"wrong corpus (expected motion-diverse-1k's review-rerun shards)."
     )
-    row = by_id[PIKE_ROW_ID]
+    row = by_id[row_id]
 
     kp70 = np.round(
         np.asarray(row["mhr70_xyz"], dtype=np.float64).reshape(70, 3), 6)
@@ -126,29 +150,46 @@ def _extract_pike_row() -> dict[str, np.ndarray]:
     }
 
 
-def _fixture_pike_row() -> dict[str, np.ndarray]:
-    fixture = json.loads(FIXTURE.read_text())
-    row = fixture["rows"][PIKE_ROW_ID]
+def _fixture_row(row_id: str) -> dict[str, np.ndarray]:
+    row = _FIXTURE_ROWS[row_id]
     return {k: np.asarray(row[k], dtype=np.float64)
             for k in ("kp70", "cam_t", "joint_global_rots", "pred_joint_coords")}
 
 
+def test_the_two_appended_rows_are_actually_in_the_fixture():
+    """Runs with or without the corpus, so a fixture that silently lost the
+    pike or the crawl row cannot read as a clean skip. Eighteen rows as of
+    2026-08-23."""
+    assert PIKE_ROW_ID in _FIXTURE_ROWS
+    assert CRAWL_ROW_ID in _FIXTURE_ROWS
+    assert len(ROW_IDS) == 18, sorted(r[:8] for r in ROW_IDS)
+
+
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
-def test_pike_row_reextracts_byte_identical_to_the_committed_fixture():
+def test_every_fixture_row_reextracts_byte_identical():
     """The control 77dbfd2's commit message described but never committed
-    (task-reltotal-review.md SHOULD-FIX 2): re-derive row 0693dd37 from the
-    corpus it was extracted from and require EXACT (np.array_equal, not
-    np.isclose) agreement with what is on disk in mhr_npz_rows.json, field
-    by field."""
-    extracted = _extract_pike_row()
-    fixture = _fixture_pike_row()
-    for key, fixture_val in fixture.items():
-        extracted_val = extracted[key]
-        assert extracted_val.shape == fixture_val.shape, (
-            f"{key}: shape {extracted_val.shape} != fixture {fixture_val.shape}")
-        assert np.array_equal(extracted_val, fixture_val), (
-            f"{key} NOT byte-identical: maxabsdiff="
-            f"{np.max(np.abs(extracted_val - fixture_val)):.3e}")
+    (task-reltotal-review.md SHOULD-FIX 2), generalised to every row: re-derive
+    the row from the corpus it was extracted from and require EXACT
+    (np.array_equal, not np.isclose) agreement with what is on disk in
+    mhr_npz_rows.json, field by field.
+
+    This is the control each append is licensed by. 1c3ba88d (the crawl row,
+    task-pelvis) was added only after the seventeen rows preceding it passed
+    this, exactly as 0693dd37 was added after sixteen."""
+    checked = 0
+    for row_id in ROW_IDS:
+        extracted = _extract_row(row_id)
+        fixture = _fixture_row(row_id)
+        for key, fixture_val in fixture.items():
+            extracted_val = extracted[key]
+            assert extracted_val.shape == fixture_val.shape, (
+                f"{row_id[:8]} {key}: shape {extracted_val.shape} != "
+                f"fixture {fixture_val.shape}")
+            assert np.array_equal(extracted_val, fixture_val), (
+                f"{row_id[:8]} {key} NOT byte-identical: maxabsdiff="
+                f"{np.max(np.abs(extracted_val - fixture_val)):.3e}")
+            checked += 1
+    assert checked == 4 * 18, checked        # positive control: the loop ran
 
 
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
@@ -159,13 +200,13 @@ def test_the_reextraction_control_catches_a_corrupted_byte():
     byte of one freshly re-extracted (not fixture) float64's in-memory
     representation -- a real corruption shape, not an epsilon nudge -- and
     requires the SAME np.array_equal the test above uses to report it."""
-    extracted = _extract_pike_row()
+    extracted = _extract_row(PIKE_ROW_ID)
     corrupted = extracted["pred_joint_coords"].copy()
     scalar_bytes = bytearray(corrupted[5, 1].tobytes())
     scalar_bytes[-1] ^= 0xFF                      # flips sign + top exponent bits
     corrupted[5, 1] = np.frombuffer(bytes(scalar_bytes), dtype=np.float64)[0]
     assert not np.array_equal(corrupted, extracted["pred_joint_coords"])  # sanity: corruption took
 
-    fixture = _fixture_pike_row()
+    fixture = _fixture_row(PIKE_ROW_ID)
     assert not np.array_equal(corrupted, fixture["pred_joint_coords"]), (
         "corrupted a byte and the byte-identity comparison still reported a match")
