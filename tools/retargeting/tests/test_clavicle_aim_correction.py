@@ -23,8 +23,13 @@ transferred pose "carries no rest-geometry bias -- it is the residual
 chest-position error plus noise". **That premise is false, and these tests
 measure it false.** The correction's rotation axis, taken in the posed
 clavicle's own frame over 500 corpus rows, scatters a median 11.8 deg (left) /
-22.1 deg (right) about ONE fixed axis, where isotropic axes would scatter
-85.5. The residual is a near-constant per-side bias, and its source is the rig
+22.1 deg (right) about ONE fixed axis. The correction is a minimal swing, so
+that axis is provably confined to the great circle perpendicular to the
+clavicle's rest long axis (measured `|axis . rest_long_axis| <= 4e-16` over
+1000 samples) -- axes uniform on THAT circle would scatter a median 79.1,
+within 20 deg 13.0% of the time (85.5 / ~3.6% is the null for a full sphere,
+which this axis never explores). The residual is a near-constant per-side
+bias, and its source is the rig
 asset: the mannequin's two rest `clavicle->shoulder` directions are 36.72 deg
 from mirrored while MHR-70's keypoint pair is 3.09 deg from mirrored
 (`test_the_rig_s_own_rest_girdle_is_the_asymmetric_thing`). So the cap does
@@ -489,6 +494,15 @@ def test_the_symmetric_pose_s_shoulder_girdle_gets_MORE_mirrored(monkeypatch):
         f"the correction left the girdle at {g1:.1f} deg against the transfer's {g0:.1f}"
     assert g1 > g_tgt - 1e-6, "the solve cannot be MORE mirrored than its own targets"
 
+    # The ratio above only bounds g1 against g0 -- a girdle that regressed
+    # from 6.8 to 12.4 deg would still clear `g1 < 0.5 * g0`. Pin the values
+    # themselves, RED-verified: perturbing either constant fails this exact
+    # assertion before the real numbers are restored.
+    assert g0 == pytest.approx(23.03, abs=0.3), \
+        f"transfer girdle drifted: {g0:.2f} vs the pinned 23.03"
+    assert g1 == pytest.approx(6.78, abs=0.3), \
+        f"corrected girdle drifted: {g1:.2f} vs the pinned 6.78"
+
     # ...and the local numbers, pinned rather than argued away. If the cap is
     # ever lowered these move together, which is the point.
     fwd = {}
@@ -663,8 +677,11 @@ def test_the_arm_below_the_shoulder_is_still_exact(monkeypatch):
                 off = _deg(QM.multiply(QM.conjugate(QM.normalize(W0[i])),
                                        QM.normalize(W1[i])))
                 assert off < 1e-9, f"{rid[:8]} {side}_{bone} world moved {off:.3e} deg"
-            # Positive control on the same solves: the clavicle DID move.
+            # Positive control on the same solves: the clavicle DID move --
+            # every row, both sides (min over the corpus is 3.27 deg), not
+            # just whatever W0/W1 happened to be left over after the loop.
             ci = I[f"{side}_clavicle"]
-    moved = _deg(QM.multiply(QM.conjugate(QM.normalize(W0[I["left_clavicle"]])),
-                             QM.normalize(W1[I["left_clavicle"]])))
-    assert moved > 1.0, "positive control: no clavicle moved on the last row"
+            moved = _deg(QM.multiply(QM.conjugate(QM.normalize(W0[ci])),
+                                     QM.normalize(W1[ci])))
+            assert moved > 1.0, \
+                f"positive control: {rid[:8]} {side}_clavicle moved only {moved:.3e} deg"

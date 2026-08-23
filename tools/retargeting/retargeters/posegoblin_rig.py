@@ -299,8 +299,11 @@ _MHR_CLAVICLE_ROW = {"left_clavicle": 74, "right_clavicle": 38}
 # rest-geometry bias; it is chest-position error plus noise") turned out to be
 # FALSE. Over 500 corpus rows the correction's rotation axis, taken in the
 # posed clavicle's own frame, scatters a median 11.8 deg (left) / 22.1 deg
-# (right) about a single fixed axis, against 85.5 deg for isotropic axes. It
-# is a near-CONSTANT per-side bias, not noise. Its source is the rig asset:
+# (right) about a single fixed axis. That axis is a minimal swing, so it is
+# provably confined to the great circle perpendicular to the clavicle's rest
+# long axis -- axes uniform on THAT circle scatter a median 79.1 deg (85.5 is
+# the null for a full sphere, which this axis never explores). It is a
+# near-CONSTANT per-side bias, not noise. Its source is the rig asset:
 # the mannequin's two rest `clavicle->shoulder` directions are 36.72 deg from
 # being mirror images of each other, while MHR-70's own keypoint pair is 3.09
 # deg from mirrored. So this correction is closing an asset asymmetry, and
