@@ -1488,11 +1488,14 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                                        QuaternionMath.rotate_vector(corr, cur),
                                        A[s2])
 
-    # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
-    # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
-    # captures split a look-down ~half/half -- crouch neck +38 / head +36 --
-    # and every posed neck is pure Y to two decimals). The head anchor above
-    # is world-exact, so its local absorbs the remainder exactly.
+    # Neck: two constructions, resolved at the block below the wrists. With
+    # `mhr_rots` it is the model's own c_neck, chest-relative; without, the
+    # v15 Y-twist half-bridge -- half the chest->head rotation's Y component
+    # (Scott 2026-08-21: "head and neck forward tilt in Y"; his captures
+    # split a look-down ~half/half -- crouch neck +38 / head +36 -- and
+    # every posed neck is pure Y to two decimals). Either way the head
+    # anchor above is world-exact, so its local absorbs the remainder
+    # exactly.
     # Wrists: palm orientation from the hand keypoints (Scott 2026-08-21:
     # "do we do anything with the wrists? ... or pronation supination?" --
     # before this, the wrist inherited the elbow rigidly and pro/sup was
@@ -1518,19 +1521,40 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             A[wi] = d
 
     hi = li["head"]
-    if s2 in A and hi in A and rig.name[nk] == "neck":
-        r_ln = QuaternionMath.multiply(
-            QuaternionMath.conjugate(Wr[nk]),
-            QuaternionMath.multiply(
-                QuaternionMath.conjugate(A[s2]),
-                QuaternionMath.multiply(A[hi], Wr[nk])))
-        if r_ln[0] < 0:
-            r_ln = -np.asarray(r_ln, float)
-        kappa = 2.0 * float(np.arctan2(r_ln[2], r_ln[0]))   # Y twist of the total
-        dy = _axis_angle_q(np.array([0.0, 1.0, 0.0]), kappa / 2.0)
-        A[nk] = QuaternionMath.multiply(
-            A[s2], QuaternionMath.multiply(
-                Wr[nk], QuaternionMath.multiply(dy, QuaternionMath.conjugate(Wr[nk]))))
+    if s2 in A and rig.name[nk] == "neck":
+        if mhr_rots is not None:
+            # The model's own neck, CHEST-RELATIVE -- the clavicle pattern
+            # one joint up, well posed for the same reason: MHR's c_neck
+            # hangs off c_spine3 exactly as the mannequin's neck hangs off
+            # spine_2. The Y-bridge below was built for rows where twist is
+            # all the landmarks can support; the model's c_neck carries
+            # 20-50 deg of REAL local bend on deep folds (pike row: 21.9),
+            # every degree of which the bridge dropped into the head's
+            # local, where it read as a hinged skull on a straight neck.
+            # Chest-relative means source-independent: whichever chest the
+            # spine switch built, `conj(W(spine_2)) . W(neck)` cancels it,
+            # so the neck LOCAL is the model's quantity verbatim
+            # (test_npz_neck.py pins both facts). The head anchor stays
+            # world-exact above; its local absorbs this exactly as it
+            # absorbed the bridge. No `hi in A` requirement -- unlike the
+            # bridge, nothing here reads the head.
+            A[nk] = QuaternionMath.multiply(A[s2], QuaternionMath.multiply(
+                QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_SPINE_2)),
+                _mhr_delta_q(mhr_rots, _spine_column()["neck_row"])))
+        elif hi in A:
+            # No rotations: the v15 Y-twist half-bridge, bit-identical.
+            r_ln = QuaternionMath.multiply(
+                QuaternionMath.conjugate(Wr[nk]),
+                QuaternionMath.multiply(
+                    QuaternionMath.conjugate(A[s2]),
+                    QuaternionMath.multiply(A[hi], Wr[nk])))
+            if r_ln[0] < 0:
+                r_ln = -np.asarray(r_ln, float)
+            kappa = 2.0 * float(np.arctan2(r_ln[2], r_ln[0]))   # Y twist of the total
+            dy = _axis_angle_q(np.array([0.0, 1.0, 0.0]), kappa / 2.0)
+            A[nk] = QuaternionMath.multiply(
+                A[s2], QuaternionMath.multiply(
+                    Wr[nk], QuaternionMath.multiply(dy, QuaternionMath.conjugate(Wr[nk]))))
 
     return A
 

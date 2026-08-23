@@ -268,10 +268,15 @@ def test_rel_peak_moves_the_chest_and_the_column_moves_with_it(monkeypatch):
 
     Unlike the rel_perjoint -> rel_total flip (which redistributed a fixed
     chest), the peak MOVES THE CHEST: spine_2's world carries the extra curl,
-    so the neck, head and both clavicles ride with it and their locals plus
-    both shoulders' locals absorb the new frames. The shoulders' WORLD
-    orientations must not move -- they come from the arm keypoints. The
-    pelvis and every limb are untouched entirely.
+    so the neck, head and both clavicles ride with it in WORLD terms, and
+    the locals that are expressed against moved frames absorb the change --
+    spine_2's own, the head's (its world anchor is fixed while its parent
+    moved), both clavicles' (through the world-aimed correction) and both
+    shoulders'. The NECK's local is deliberately absent from that set: the
+    npz neck is chest-relative (test_npz_neck.py), so the chest cancels out
+    of it algebraically -- same invariant as the cap-0 clavicle transfer.
+    The shoulders' WORLD orientations must not move -- they come from the
+    arm keypoints. The pelvis and every limb are untouched entirely.
 
     On a monotonic row the two mappings agree to sampling resolution
     (asserted above), so this set is asserted on the pike row, where the
@@ -280,7 +285,7 @@ def test_rel_peak_moves_the_chest_and_the_column_moves_with_it(monkeypatch):
     pk = _at(PG.SPINE_SOURCE_REL_PEAK, monkeypatch, PIKE_ROW)
     assert set(tot) == set(pk)
     changed = {i for i in tot if not np.allclose(tot[i], pk[i], atol=1e-9)}
-    expected = {I[n] for n in ("spine_1", "spine_2", "neck", "head",
+    expected = {I[n] for n in ("spine_1", "spine_2", "head",
                                "left_clavicle", "right_clavicle",
                                "left_shoulder", "right_shoulder")}
     assert changed == expected, (

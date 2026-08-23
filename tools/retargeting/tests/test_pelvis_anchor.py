@@ -484,13 +484,15 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
     one frame. This is the honest positional summary that
     `pelvis->hip` alone is not.
 
-    Fixture (21 rows, spine default rel_peak): median 0.1893 -> 0.0731,
-    worst 0.3789 -> 0.1049, better on 18 of 21 and never worse by more than
-    0.014. The relpeak flip moved BOTH columns -- the deeper chest curl
-    costs the hip-line pelvis on its worst rows (before-max 0.2988 ->
-    0.3789) and pays the shipped anchor back double (after-max 0.1847 ->
-    0.1049: the pike body finally lands on its keypoints). 18-row
-    task-pelvis figures under rel_total were 0.1489 -> 0.0733.
+    Fixture (21 rows, spine default rel_peak + the npz neck): median
+    0.1913 -> 0.0735, worst 0.3902 -> 0.1022, better on 18 of 21 and never
+    worse by more than 0.016. The relpeak flip moved BOTH columns -- the
+    deeper chest curl costs the hip-line pelvis on its worst rows
+    (before-max 0.2988 -> 0.3902 across the two changes) and pays the
+    shipped anchor back double (after-max 0.1847 -> 0.1022: the pike body
+    finally lands on its keypoints); the npz neck then nudged every head
+    position on both paths. 18-row task-pelvis figures under rel_total and
+    the Y-bridge neck were 0.1489 -> 0.0733.
     Corpus (1800, task-pelvis, under rel_total): median 0.0871 -> 0.0574,
     p90 0.2163 -> 0.0850, better on 1562 rows."""
     body = ["left_hip", "right_hip", "left_knee", "right_knee", "left_ankle",
@@ -519,10 +521,10 @@ def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
         before.append(_rms(_positions(_at(PG.PELVIS_SOURCE_HIPS, monkeypatch, row_id)), T))
         after.append(_rms(_positions(_at(PG.PELVIS_SOURCE_NPZ_ROOT, monkeypatch, row_id)), T))
     assert len(before) == 21                                 # positive control
-    assert float(np.median(before)) == pytest.approx(0.1893, abs=0.002)
-    assert float(np.median(after)) == pytest.approx(0.0731, abs=0.002)
-    assert max(before) == pytest.approx(0.3789, abs=0.002)   # the pike row
-    assert max(after) == pytest.approx(0.1049, abs=0.002)
+    assert float(np.median(before)) == pytest.approx(0.1913, abs=0.002)
+    assert float(np.median(after)) == pytest.approx(0.0735, abs=0.002)
+    assert max(before) == pytest.approx(0.3902, abs=0.002)   # the pike row
+    assert max(after) == pytest.approx(0.1022, abs=0.002)
     improved = sum(a < b for a, b in zip(after, before))
     assert improved == 18, improved
-    assert max(a - b for a, b in zip(after, before)) < 0.015
+    assert max(a - b for a, b in zip(after, before)) < 0.016

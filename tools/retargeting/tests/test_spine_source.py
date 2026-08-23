@@ -199,7 +199,11 @@ def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
     CLAVICLES are too: they take the model's chest-relative rotation whenever
     rotations are present, whatever the spine mapping is. The two SHOULDERS
     follow because their local is expressed against the clavicle's world
-    frame.
+    frame. Since task-relpeak (2026-08-24) the NECK is the third such
+    transfer -- the model's own c_neck, chest-relative, whenever rotations
+    are present (test_npz_neck.py) -- and the HEAD's local follows it the
+    way the shoulders follow the clavicles, so those two sit outside the
+    spine-revert identity now too.
 
     task-clavcorrect then made the clavicle's membership of that set
     ROW-DEPENDENT, and the mechanism is worth stating because it is the
@@ -227,37 +231,46 @@ def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
     monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
 
     # Half one: SPINE_SOURCE alone is NOT enough any more, and exactly which
-    # bones it leaves behind is stated rather than implied.
+    # bones it leaves behind is stated rather than implied. The neck and
+    # head are here because the neck transfer keys on `mhr_rots`, exactly
+    # like the clavicles (task-relpeak).
     monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_NPZ_ROOT)
     spine_only = _solve(DEV_ROW, _rots(DEV_ROW))
     left = {RIG.name[i] for i in v15
             if not np.allclose(v15[i], spine_only[i], atol=1e-12)}
-    assert left == {"pelvis", "left_hip", "right_hip", "spine_1", "spine_2"}, left
+    assert left == {"pelvis", "left_hip", "right_hip", "spine_1", "spine_2",
+                    "neck", "head"}, left
 
-    # Half two: with the pelvis reverted too, the identity is exact again.
+    # Half two: with the pelvis reverted too, the SPINE identity is exact
+    # again -- and what is left changed is precisely the mhr_rots-keyed neck
+    # transfer plus the head local that absorbs it (DEV_ROW's clavicle
+    # residual is inside the cap, so the corrected transfer reproduces the
+    # aim path exactly and all four girdle bones drop out).
     monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_HIPS)
     both = _solve(DEV_ROW, _rots(DEV_ROW))
 
     # Index-keyed, never name-keyed: two rig bones share the name "joint7".
     changed = {i for i in v15 if not np.allclose(v15[i], both[i], atol=1e-12)}
-    assert changed == set(), (
-        f"unexpected: {sorted(RIG.name[i] for i in changed)} -- DEV_ROW's "
-        f"clavicle residual is inside the cap, so the corrected transfer must "
-        f"reproduce the aim path exactly")
+    assert changed == {I["neck"], I["head"]}, (
+        f"got {sorted(RIG.name[i] for i in changed)} -- expected exactly the "
+        f"npz neck transfer and the head local that absorbs it")
 
-    # Positive control: a row whose residual EXCEEDS the cap keeps the four.
+    # Positive control: a row whose residual EXCEEDS the cap keeps the four
+    # girdle bones as well.
     over = "1306cf47fc900dd36b8554ad638afca2"
     v15_o = _solve(over, None)
     both_o = _solve(over, _rots(over))
     changed_o = {i for i in v15_o if not np.allclose(v15_o[i], both_o[i], atol=1e-12)}
     expected = {I[n] for n in ("left_clavicle", "right_clavicle",
-                               "left_shoulder", "right_shoulder")}
+                               "left_shoulder", "right_shoulder",
+                               "neck", "head")}
     assert changed_o == expected, (
         f"unexpected: {sorted(RIG.name[i] for i in changed_o - expected)}, "
         f"missing: {sorted(RIG.name[i] for i in expected - changed_o)}")
-    # The SPINE itself -- and everything else hanging off it -- is untouched,
-    # which is the whole content of this fallback.
-    for name in ("pelvis", "spine_1", "spine_2", "neck", "head"):
+    # The SPINE itself is untouched, which is the whole content of this
+    # fallback. The neck and head are deliberately NOT in this list any
+    # more: they belong to the mhr_rots-keyed transfers, asserted above.
+    for name in ("pelvis", "spine_1", "spine_2"):
         assert np.allclose(v15[I[name]], both[I[name]], atol=1e-12), name
     # ...and on the control row the shoulders moved only in their LOCAL: their
     # world orientation comes from the arm keypoints, which no rotation
