@@ -199,6 +199,27 @@ def test_a_strictly_monotonic_column_reproduces_the_end_sample(monkeypatch):
                             _conj(_rel_delta(_rots(PIKE_ROW), MHR_SPINE3)))) > 15.0
 
 
+def test_the_peak_never_reads_less_than_the_end():
+    """By construction -- the end sample is one of the 33 and the peak takes
+    the max -- so on EVERY fixture row peak angle >= end angle, up to slerp
+    endpoint float noise. The property that makes the peak safe to ship as
+    the default: it can only ever ADD the curl the end dropped, never
+    subtract.
+
+    Positive control: the inequality is strict by a measured margin on the
+    four flexion acceptance rows, so a `_rel_peak_q` that quietly returned
+    the end could not pass their side of it."""
+    strict = {PIKE_ROW: 15.0, CROUCH_ROW: 8.0, BRIDGE_ROW: 1.0}
+    for row_id in ROWS:
+        rots = _rots(row_id)
+        peak = _ang(PG._rel_peak_q(rots))
+        end = _ang(_rel_delta(rots, MHR_SPINE3))
+        assert peak >= end - 1e-9, \
+            f"{row_id[:8]}: peak {peak:.2f} deg reads LESS than the end {end:.2f}"
+        if row_id in strict:
+            assert peak > end + strict[row_id], (row_id[:8], peak, end)
+
+
 # --------------------------------------------------------------------------
 # 3. The distribution is untouched: 65/35 on every row, same as rel_total.
 # --------------------------------------------------------------------------
