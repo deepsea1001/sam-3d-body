@@ -540,6 +540,14 @@ def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
     conflict, they are different quantities. Applying the camera map to
     model-frame rotations produces two upright skeletons pointing 160 deg
     apart -- plausible-looking and wrong.
+
+    A trap for anyone adding an order control (task-pelvis review finding
+    1): MHR's rest ROOT quaternion is exactly identity ([1,0,0,0]), so at
+    the root Delta(root) == R_pose(root) and this function's composition
+    order (R_pose @ R_rest^T, not the reverse) is UNFALSIFIABLE there -- a
+    "confirms the order" check run against the root alone is vacuous no
+    matter what it reports. Use a joint with non-identity rest instead
+    (r_ball, rest 179.22 deg separates the two orders by 162 deg).
     """
     return QuaternionMath.multiply(
         QuaternionMath.from_matrix(np.asarray(mhr_rots, float)[row]),
