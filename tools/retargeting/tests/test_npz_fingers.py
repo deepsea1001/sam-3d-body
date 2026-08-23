@@ -555,7 +555,7 @@ def test_no_phalange_is_ever_dead_across_the_whole_fixture():
     assert len(per_bone) == 30 and all(len(v) == len(ROWS) for v in per_bone.values())
 
     quiet = {n: float(np.median(v)) for n, v in per_bone.items() if np.median(v) <= 5.0}
-    assert quiet == {}, quiet            # worst measured median 9.42 deg over 16 rows
+    assert quiet == {}, quiet            # worst measured median 9.42 deg over 17 rows
     never = {n: min(v) for n, v in per_bone.items() if min(v) <= 0.25}
     assert never == {}, never            # worst measured single sample 0.297 deg
 
