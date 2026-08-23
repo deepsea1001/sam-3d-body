@@ -180,28 +180,61 @@ def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
     CLAVICLES are too: they take the model's chest-relative rotation whenever
     rotations are present, whatever the spine mapping is. The two SHOULDERS
     follow because their local is expressed against the clavicle's world
-    frame. That is asserted here as an exact set, so a transfer that started
-    keying on SPINE_SOURCE, or one that reached a bone further, fails here."""
+    frame.
+
+    task-clavcorrect then made the clavicle's membership of that set
+    ROW-DEPENDENT, and the mechanism is worth stating because it is the
+    sharpest available description of what the bounded aim correction costs.
+    The correction aims the transferred clavicle back at the shoulder keypoint
+    by up to `_CLAV_AIM_CORRECTION_MAX_DEG`. When a row's residual FITS inside
+    that cap the aim lands exactly -- and a clavicle that lands exactly on the
+    keypoint, composed onto this same v15 spine, is bit-for-bit the clavicle
+    the `mhr_rots=None` path already aims there. The transfer contributes
+    nothing on such a row.
+
+    DEV_ROW is one of them: measured HERE, under SPINE_SOURCE_V15, its
+    residual is 14.59 deg (left) / 8.15 (right), both under 15, so all four
+    bones drop out of the changed set entirely. `1306cf47` is not (27.47 /
+    25.17) and is asserted below as the positive control, so "nothing
+    changed" can never be mistaken for a comparison that stopped running.
+
+    Both figures are taken under THIS test's spine mapping on purpose: the
+    residual is a property of the spine too, not of the clavicle alone. The
+    same seventeen rows measure a median 18.8 deg of it under the production
+    SPINE_SOURCE_REL_TOTAL against 9.1 under V15, which is worth knowing
+    independently -- roughly half the shoulder ball's drift is being handed
+    to the clavicle by the spine above it."""
     v15 = _solve(DEV_ROW, None)
     monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
     both = _solve(DEV_ROW, _rots(DEV_ROW))
 
     # Index-keyed, never name-keyed: two rig bones share the name "joint7".
     changed = {i for i in v15 if not np.allclose(v15[i], both[i], atol=1e-12)}
+    assert changed == set(), (
+        f"unexpected: {sorted(RIG.name[i] for i in changed)} -- DEV_ROW's "
+        f"clavicle residual is inside the cap, so the corrected transfer must "
+        f"reproduce the aim path exactly")
+
+    # Positive control: a row whose residual EXCEEDS the cap keeps the four.
+    over = "1306cf47fc900dd36b8554ad638afca2"
+    v15_o = _solve(over, None)
+    both_o = _solve(over, _rots(over))
+    changed_o = {i for i in v15_o if not np.allclose(v15_o[i], both_o[i], atol=1e-12)}
     expected = {I[n] for n in ("left_clavicle", "right_clavicle",
                                "left_shoulder", "right_shoulder")}
-    assert changed == expected, (
-        f"unexpected: {sorted(RIG.name[i] for i in changed - expected)}, "
-        f"missing: {sorted(RIG.name[i] for i in expected - changed)}")
+    assert changed_o == expected, (
+        f"unexpected: {sorted(RIG.name[i] for i in changed_o - expected)}, "
+        f"missing: {sorted(RIG.name[i] for i in expected - changed_o)}")
     # The SPINE itself -- and everything else hanging off it -- is untouched,
     # which is the whole content of this fallback.
     for name in ("pelvis", "spine_1", "spine_2", "neck", "head"):
         assert np.allclose(v15[I[name]], both[I[name]], atol=1e-12), name
-    # ...and the shoulders moved only in their LOCAL: their world orientation
-    # comes from the arm keypoints, which no rotation transfer touches.
-    w15, wboth = _world(v15), _world(both)
+    # ...and on the control row the shoulders moved only in their LOCAL: their
+    # world orientation comes from the arm keypoints, which no rotation
+    # transfer touches.
+    w15, wboth = _world(v15_o), _world(both_o)
     for name in ("left_shoulder", "right_shoulder"):
-        assert _quat_deg(v15[I[name]], both[I[name]]) > 1e-6            # control
+        assert _quat_deg(v15_o[I[name]], both_o[I[name]]) > 1e-6        # control
         assert _quat_deg(w15[I[name]], wboth[I[name]]) < 1e-6, name
     phalanges = {i for i in RIG.order
                  if ("_thumb_" in RIG.name[i] or "_finger_" in RIG.name[i])

@@ -134,7 +134,18 @@ def _rest_long_axis(side):
     return d, QM.rotate_vector(QM.conjugate(WR[ci]), d)
 
 
-def _solve(row_id, rows=None, **kw):
+def _solve(row_id, rows=None, cap=None, monkeypatch=None, **kw):
+    """*cap* overrides `_CLAV_AIM_CORRECTION_MAX_DEG` for this solve.
+
+    cap=0.0 is the TRANSFER on its own -- what this file was written against,
+    before task-clavcorrect aimed it back at the keypoint by up to 15 deg.
+    The transfer's own contracts are still asserted there, exactly; what is
+    asserted at the production cap is stated as such and pinned separately.
+    `test_clavicle_aim_correction.py` proves cap 0 reproduces the shipped
+    transfer bit-for-bit, which is what makes this a measurement of f07064f
+    and not of a reconstruction of it."""
+    if cap is not None:
+        monkeypatch.setattr(PG, "_CLAV_AIM_CORRECTION_MAX_DEG", float(cap))
     src = rows if rows is not None else ROWS
     r = src[row_id]
     kp = np.asarray(r["kp70"], np.float32).reshape(70, 3)
@@ -218,7 +229,7 @@ def test_the_asset_is_self_consistent_after_the_rest_rebase():
 # Acceptance 1 and 2: the two rows Scott named
 # --------------------------------------------------------------------------- #
 
-def test_the_symmetric_pose_gets_symmetric_clavicles():
+def test_the_symmetric_pose_gets_symmetric_clavicles(monkeypatch):
     """Acceptance 1. Double-biceps: the arms are symmetric, so the clavicles
     must be. The aim path made them 24.5 deg with 21.1 deg of FORWARD
     protraction on the left against 18.5 deg with 16.1 deg BACKWARD on the
@@ -227,8 +238,18 @@ def test_the_symmetric_pose_gets_symmetric_clavicles():
 
     Held to MHR's own chest-relative SWING (L 7.8, R 9.5; the full rotations
     are 14.6 and 9.5 and the difference is the roll this transfer drops by
-    design), and to the shoulder ball going UP rather than forward."""
-    _, L = _solve(BICEPS)
+    design), and to the shoulder ball going UP rather than forward.
+
+    ADDRESSED TO THE TRANSFER (cap 0), since task-clavcorrect. The bounded
+    aim correction that now sits on top of it deliberately reintroduces some
+    of this protraction -- because the mannequin's two rest clavicles are
+    36.72 deg from mirrored, so reaching two MIRRORED keypoints needs two
+    non-mirrored local swings. That is not this test's subject and it is not
+    hidden either: `test_the_corrected_local_pays_protraction_for_the_ball`
+    below pins exactly what the correction does to these same numbers, and
+    `test_clavicle_aim_correction.py` measures the world-space girdle that
+    justifies it."""
+    _, L = _solve(BICEPS, cap=0.0, monkeypatch=monkeypatch)
     got = {}
     for side in ("left", "right"):
         d = _clavicle_local_delta(L, side)
@@ -258,12 +279,16 @@ def test_the_symmetric_pose_gets_symmetric_clavicles():
         f"protraction is mirror-asymmetric: left {zl:.1f}, right {zr:.1f}"
 
 
-def test_the_standing_pose_has_no_invented_forward_swing():
+def test_the_standing_pose_has_no_invented_forward_swing(monkeypatch):
     """Acceptance 2. Standing still, the aim path swung the left clavicle
     33.1 deg with 30.9 deg of it forward protraction. The model's own
     chest-relative swing is 9.1 / 14.7, and whatever protraction survives
-    there is the model's reading of the pose, not ours."""
-    _, L = _solve(STANDING)
+    there is the model's reading of the pose, not ours.
+
+    Addressed to the TRANSFER (cap 0) since task-clavcorrect -- see
+    test_the_symmetric_pose_gets_symmetric_clavicles for why, and for where
+    the corrected numbers are pinned instead."""
+    _, L = _solve(STANDING, cap=0.0, monkeypatch=monkeypatch)
     for side in ("left", "right"):
         d = _clavicle_local_delta(L, side)
         v = _shoulder_shift(d, side)
@@ -280,7 +305,7 @@ def test_the_standing_pose_has_no_invented_forward_swing():
 # The transfer's own contracts
 # --------------------------------------------------------------------------- #
 
-def test_the_local_is_the_model_s_rotation_in_the_clavicle_s_own_frame():
+def test_the_local_is_the_model_s_rotation_in_the_clavicle_s_own_frame(monkeypatch):
     """The frame algebra, stated as an assertion rather than trusted.
 
         L(clav) = (D(spine_2) . Wr(spine_2))^-1 . D(clav) . Wr(clav)
@@ -293,10 +318,16 @@ def test_the_local_is_the_model_s_rotation_in_the_clavicle_s_own_frame():
 
     Positive control: the same comparison against the UNSTRIPPED rotation must
     NOT hold wherever MHR carries roll, or this would pass on a solve that
-    ignored the swing-only rule."""
+    ignored the swing-only rule.
+
+    Addressed to the TRANSFER (cap 0) since task-clavcorrect: the frame
+    algebra above is a statement about `_swing_about`, and the bounded aim
+    correction composes a further rotation onto it by design. How far that
+    rotation can go is itself asserted, in
+    test_the_correction_moves_the_local_by_at_most_the_cap."""
     checked, differ = 0, 0
     for rid in ROWS:
-        _, L = _solve(rid)
+        _, L = _solve(rid, cap=0.0, monkeypatch=monkeypatch)
         for side in ("left", "right"):
             ci = I[f"{side}_clavicle"]
             ax_world, _ = _rest_long_axis(side)
@@ -378,3 +409,103 @@ def test_the_fallback_path_is_untouched():
             err = np.degrees(np.arcsin(np.clip(
                 float(np.linalg.norm(np.cross(landed, tb))), 0, 1)))
             assert err < 1e-9, f"{rid[:8]} {side}: fallback aim is {err:.3e} deg off"
+
+
+# --------------------------------------------------------------------------- #
+# What the bounded aim correction (task-clavcorrect) does to all of the above
+# --------------------------------------------------------------------------- #
+
+def test_the_corrected_local_pays_protraction_for_the_ball(monkeypatch):
+    """The trade, on the two rows this file exists for, stated in the same
+    numbers the tests above use so the two cannot drift apart.
+
+    The correction buys the shoulder BALL its keypoint back and pays for it in
+    exactly the currency f07064f was written to stop spending: protraction.
+    Both halves are pinned. Nothing here is an improvement claim -- the
+    improvement claim lives in `test_clavicle_aim_correction.py`, in the world
+    frame, where it can be checked."""
+    for rid, want in ((BICEPS, {"left": (18.33, 3.33, 7.8, 21.3, -3.7, -17.8),
+                                "right": (16.22, 1.22, 9.5, 19.7, +0.8, +15.2)}),
+                      (STANDING, {"left": (24.60, 9.60, 9.1, 23.6, -7.8, -21.9),
+                                  "right": (11.68, 0.00, 14.7, 4.1, -10.8, -1.1)})):
+        t0, L0 = _solve(rid, cap=0.0, monkeypatch=monkeypatch)
+        monkeypatch.undo()
+        t1, L1 = _solve(rid)
+        for side in ("left", "right"):
+            e0, e1, tot0, tot1, ez0, ez1 = want[side]
+            ci, si = I[f"{side}_clavicle"], I[f"{side}_shoulder"]
+            got = []
+            for T, L in ((t0, L0), (t1, L1)):
+                rb, _ = _rest_long_axis(side)
+                W = fk_world_orientations(RIG, {**RIG.rest_local_q, **L})
+                d = QM.multiply(W[ci], QM.conjugate(WR[ci]))
+                a = QM.rotate_vector(d, rb)
+                a = a / np.linalg.norm(a)
+                b = np.asarray(T[si], float) - np.asarray(T[ci], float)
+                b = b / np.linalg.norm(b)
+                got.append(float(np.degrees(np.arccos(np.clip(float(a @ b), -1, 1)))))
+            d0, d1 = _clavicle_local_delta(L0, side), _clavicle_local_delta(L1, side)
+            print(f"\n{rid[:8]} {side:6s} aim err {got[0]:5.2f} -> {got[1]:5.2f}   "
+                  f"|local| {_deg(d0):5.1f} -> {_deg(d1):5.1f}   "
+                  f"euler-Z {_euler_xyz_deg(d0)[2]:+6.1f} -> {_euler_xyz_deg(d1)[2]:+6.1f}")
+            assert got[0] == pytest.approx(e0, abs=0.1)
+            assert got[1] == pytest.approx(e1, abs=0.1)
+            assert _deg(d0) == pytest.approx(tot0, abs=0.3)
+            assert _deg(d1) == pytest.approx(tot1, abs=0.3)
+            assert _euler_xyz_deg(d0)[2] == pytest.approx(ez0, abs=0.3)
+            assert _euler_xyz_deg(d1)[2] == pytest.approx(ez1, abs=0.3)
+
+
+def test_the_correction_moves_the_local_by_at_most_the_cap(monkeypatch):
+    """The cap bounds the LOCAL, not merely the aim -- which is the property
+    Scott's IK and the rig's joint limits actually care about.
+
+    Stated in two parts, because the obvious one-line version is WRONG and
+    measurement caught it. The correction multiplies the WORLD delta on the
+    left by a rotation of at most CAP and leaves the parent alone, so it is
+    tempting to conclude the local moves by at most CAP too. It does not:
+    both locals are minimal swings from the SAME rest axis to two directions
+    CAP apart, and two such swings differ by that CAP plus the sphere's own
+    holonomy -- a twist about the rest axis, measured here at up to 4.07 deg.
+    So:
+
+      * the SWING -- how far the correction moves where the clavicle points --
+        is exactly the applied correction, and never exceeds CAP.
+      * the whole local moves CAP + holonomy, measured max 15.54 deg against a
+        15 deg cap.
+
+    Neither local carries any roll itself; the holonomy lives only in the
+    difference between them (`test_the_transferred_local_still_carries_no_roll`
+    holds at 1e-9 on both).
+
+    Positive control: some row must move by the FULL cap, or the bound is
+    being satisfied by a correction that never fired."""
+    cap = PG._CLAV_AIM_CORRECTION_MAX_DEG
+    swings, totals = [], []
+    for rows in (ROWS, NPZ_ROWS):
+        for rid in rows:
+            _, L0 = _solve(rid, rows=rows, cap=0.0, monkeypatch=monkeypatch)
+            monkeypatch.undo()
+            _, L1 = _solve(rid, rows=rows)
+            for side in ("left", "right"):
+                ci = I[f"{side}_clavicle"]
+                ax_world, ax_local = _rest_long_axis(side)
+                a, b = (QM.rotate_vector(
+                    QM.multiply(QM.conjugate(RIG.rest_local_q[ci]), L[ci]), ax_local)
+                    for L in (L0, L1))
+                sw = float(np.degrees(np.arccos(np.clip(
+                    float(a @ b) / (np.linalg.norm(a) * np.linalg.norm(b)), -1, 1))))
+                assert sw <= cap + 1e-5, \
+                    f"{rid[:8]} {side}: the aim moved {sw:.4f} deg, cap is {cap}"
+                swings.append(sw)
+                totals.append(_deg(QM.multiply(QM.conjugate(L0[ci]), L1[ci])))
+    swings, totals = np.array(swings), np.array(totals)
+    print(f"\ncorrection: SWING median {np.median(swings):.2f} max {swings.max():.4f} "
+          f"of a {cap:.0f} deg cap ({int((swings > cap - 1e-5).sum())}/{len(swings)} "
+          f"saturate); whole local moves max {totals.max():.4f}")
+    assert swings.max() == pytest.approx(cap, abs=1e-5), \
+        "positive control: no clavicle was moved the full cap"
+    assert float(np.median(swings)) > 1.0, \
+        "positive control: the correction is inert on most rows"
+    assert totals.max() == pytest.approx(15.54, abs=0.1), \
+        f"the holonomy term moved: local now travels {totals.max():.2f} deg, was 15.54"

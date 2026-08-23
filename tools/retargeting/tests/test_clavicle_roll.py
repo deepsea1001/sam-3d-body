@@ -559,12 +559,23 @@ def test_the_arm_still_lands_on_its_targets():
     model's own chest-relative rotation, which lands the shoulder where the
     MODEL puts it rather than exactly on MHR-70's shoulder keypoint, and the
     two disagree -- the mannequin's rest shoulder sits 26.5 deg off MHR's.
-    That residual is the price of not manufacturing 20-30 deg of invented
+    That residual was the price of not manufacturing 20-30 deg of invented
     protraction to close a rest gap (tests/test_clavicle_source.py), and
-    Scott accepted it knowingly. Measured over these sixteen rows: median
-    cosine 0.9464, worst 0.8315 (33.7 deg, row 9029c8a8 right). Pinned as a
-    REGRESSION BOUND at 0.80, named -- not as an aspiration, and never
-    applied to the fallback path where the old guarantee still holds.
+    Scott accepted it knowingly -- until the ball being off its keypoint
+    turned up as arm OVERSHOOT in his renders.
+
+    task-clavcorrect then bounded it: the transferred clavicle is aimed back
+    at the keypoint by at most `_CLAV_AIM_CORRECTION_MAX_DEG` = 15. So this
+    edge is much closer to exact than it was, and the bound TIGHTENS here
+    rather than loosening. Measured over these sixteen rows:
+
+        f07064f (transfer only)   median cosine 0.9464, worst 0.8315 (33.7 deg)
+        with the bounded aim       median cosine 0.9978, worst 0.9470 (18.7 deg)
+
+    Pinned as a REGRESSION BOUND at 0.90, named -- not as an aspiration, and
+    never applied to the fallback path where the old guarantee still holds.
+    The bound moved 0.80 -> 0.90 because the measurement did; do not move it
+    back to make a run pass.
 
     What does NOT move either way is everything below the shoulder: the
     shoulder, elbow and wrist are world-anchored from the arm keypoints, so
@@ -572,7 +583,7 @@ def test_the_arm_still_lands_on_its_targets():
     1800 corpus rows: cosine 1.000000, all 3600."""
     seen = {}
     for label, kw, clav_floor in (("fallback", {}, 0.9999),
-                                  ("transfer", {"mhr_rots": True}, 0.80)):
+                                  ("transfer", {"mhr_rots": True}, 0.90)):
         scored, bad, clav = 0, {}, []
         for rid in ROWS:
             targets = rig_targets_from_mhr70(_kp(rid))
@@ -601,4 +612,4 @@ def test_the_arm_still_lands_on_its_targets():
     # The split is the point, so assert the two paths really are different --
     # otherwise the transfer's looser floor would be measuring the fallback.
     assert seen["fallback"].min() > 0.9999
-    assert seen["transfer"].min() == pytest.approx(0.8315, abs=0.01)
+    assert seen["transfer"].min() == pytest.approx(0.9470, abs=0.01)

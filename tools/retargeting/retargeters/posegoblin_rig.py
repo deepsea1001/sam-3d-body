@@ -283,6 +283,54 @@ _MHR_ROOT = 1       # `root`, the MHR joint the mannequin's pelvis corresponds
 _MHR_CHEST = _MHR_SPINE_2
 _MHR_CLAVICLE_ROW = {"left_clavicle": 74, "right_clavicle": 38}
 
+# task-clavcorrect (2026-08-23): how far the transferred clavicle may then be
+# aimed BACK at the kp70 shoulder keypoint.
+#
+# The transfer below buys an exact clavicle ROTATION at the price of the
+# shoulder ROOT: the ball drifts a corpus median 0.516 rig units off its
+# keypoint (`clavicle->shoulder` cosine median 0.949). Everything under the
+# shoulder is world-anchored from the arm keypoints and stays exact, so the
+# whole arm becomes a right direction from a wrong origin -- which is what
+# Scott reports as hand/arm OVERSHOOT on crouch and ground-contact poses (rows
+# 2ba1b3e0, 38608eb8, 4fe66c92; his captures -39/-40/-41).
+#
+# WHAT THE RESIDUAL ACTUALLY IS -- measured, because the design premise this
+# was written from ("correcting from the transferred pose carries no
+# rest-geometry bias; it is chest-position error plus noise") turned out to be
+# FALSE. Over 500 corpus rows the correction's rotation axis, taken in the
+# posed clavicle's own frame, scatters a median 11.8 deg (left) / 22.1 deg
+# (right) about a single fixed axis, against 85.5 deg for isotropic axes. It
+# is a near-CONSTANT per-side bias, not noise. Its source is the rig asset:
+# the mannequin's two rest `clavicle->shoulder` directions are 36.72 deg from
+# being mirror images of each other, while MHR-70's own keypoint pair is 3.09
+# deg from mirrored. So this correction is closing an asset asymmetry, and
+# every degree of it lands in the LOCAL as protraction -- the exact signature
+# f07064f removed. That trade is linear and has no sweet spot: each degree of
+# cap buys one degree of aim and costs ~0.95 deg of local protraction.
+#
+# It is capped and kept anyway, because in the WORLD -- what Scott looks at --
+# it is a large improvement, measured on the 16 corpus rows whose kp70 girdle
+# is itself within 5 deg of mirrored: the two shoulder balls sit a median
+# 24.97 deg from mirrored under the pure transfer (the rig's own rest is
+# 26.14, i.e. the transfer inherits the asset defect untouched), 8.66 deg
+# after this correction, against 4.12 deg for the keypoints themselves. The
+# cap is what stops it going all the way (4.71 deg) and dragging the whole
+# rest gap into the local with it.
+#
+# 15 deg is measured against the residual, not picked round: over 3600 corpus
+# clavicles the pre-correction error is median 18.3, p90 27.0, max 41.0 deg.
+# THE COSTS ARE REAL and belong next to the number: |clavicle local| rises
+# again (fixture row 0693dd37 left 41.9 -> 52.7 deg), and on a row whose
+# residual FITS under the cap the clavicle becomes bit-identical to the
+# pre-f07064f aim on the same spine (test_spine_source pins one). If the
+# local is ever judged to matter more than the ball's position, this constant
+# is the whole dial -- 0.0 restores the pure transfer exactly.
+#
+# Roll-freeness is NOT a property of this number: the correction re-aims
+# through `_aim_delta`, so the LOCAL is twist-free about the clavicle's long
+# axis at any cap -- tests/test_clavicle_aim_correction.py checks 0, 15, 180.
+_CLAV_AIM_CORRECTION_MAX_DEG = 15.0
+
 # Where the mannequin's spine comes from when the caller supplies
 # `mhr_rots`. Four named mappings, one switch, so every comparison in the
 # task-6b report stays reproducible instead of living in a scratch branch:
@@ -680,6 +728,33 @@ def _min_swing_q(a, b):
         return np.array([0.0, axis[0], axis[1], axis[2]])
     q = np.array([1.0 + d, *np.cross(a, b)])
     return q / np.linalg.norm(q)
+
+
+def _capped_q(q, max_deg):
+    """*q* with its rotation ANGLE clamped to *max_deg*, same axis, same sign.
+
+    Clamping the angle and keeping the axis is the only reduction that stays
+    on the geodesic between the two directions the rotation was built from --
+    scaling a quaternion's components, or slerping toward identity, both do
+    the same thing for a pure rotation, but only this form makes the applied
+    angle readable and therefore assertable to 1e-6 (which is what
+    test_a_huge_residual_clamps_at_exactly_the_cap needs).
+
+    Below the cap *q* comes back untouched, so a correction that already fits
+    is not perturbed by passing through here.
+    """
+    q = np.asarray(q, float)
+    if q[0] < 0:
+        q = -q
+    n = float(np.linalg.norm(q[1:]))
+    if n < 1e-12:
+        return q                       # identity: nothing to clamp
+    half = float(np.arctan2(n, q[0]))
+    lim = float(np.radians(max_deg)) / 2.0
+    if half <= lim:
+        return q
+    axis = q[1:] / n
+    return np.array([np.cos(lim), *(np.sin(lim) * axis)])
 
 
 def _aim_delta(rest_dir, target_dir, d_parent):
@@ -1167,6 +1242,35 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                 continue
             rel = QuaternionMath.multiply(chest_inv, _mhr_delta_q(mhr_rots, row))
             A[ci] = QuaternionMath.multiply(A[s2], _swing_about(rel, axis))
+            # ...then aim what that produced back at the shoulder keypoint,
+            # by at most _CLAV_AIM_CORRECTION_MAX_DEG -- see that constant for
+            # what the residual was measured to BE (a near-constant per-side
+            # asset asymmetry, not noise) and what capping it costs.
+            #
+            # Re-aiming rather than composing, on purpose. `_swing_about(rel,
+            # axis)` is already the UNIQUE twist-free rotation that sends
+            # `axis` where `rel` sends it (a rotation with a given image of
+            # `axis` is twist-free about it only at zero twist), so the delta
+            # above IS an aim, at the direction the model's own rotation
+            # chose. Feeding a corrected direction back through `_aim_delta`
+            # therefore moves the aim and nothing else -- and inherits its
+            # contract, so the LOCAL stays roll-free by construction instead
+            # of by luck. Composing the correction on top would not: the
+            # product of two swings about different axes carries twist.
+            #
+            # A zero cap reproduces this line's own output exactly, which is
+            # what lets the tests measure "before" without a second solver.
+            si = child[0]
+            if ci in targets and si in targets:
+                want = _unit_or_none(np.asarray(targets[si], float)
+                                     - np.asarray(targets[ci], float))
+                if want is not None:
+                    cur = QuaternionMath.rotate_vector(A[ci], axis)
+                    corr = _capped_q(_min_swing_q(cur, want),
+                                     _CLAV_AIM_CORRECTION_MAX_DEG)
+                    A[ci] = _aim_delta(axis,
+                                       QuaternionMath.rotate_vector(corr, cur),
+                                       A[s2])
 
     # Neck: pure local-Y nod carrying HALF the chest->head rotation's Y
     # component (Scott 2026-08-21: "head and neck forward tilt in Y"; his
