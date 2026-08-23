@@ -72,6 +72,12 @@ CRAWL_ROW = "1c3ba88d8b32b3c20a458eb5512ee3f8"   # crawl, 53.24 deg out
 DEV_ROW = "a6566802a6c9ddd63340ccb4520e0001"
 MHR_ROOT = 1
 
+# Camera -> rig POSITION map: cv_to_yup's -Y composed with the solver's own
+# _CV_YUP_TO_RIG -Z, exactly as test_npz_spine.py defines it. Needed for
+# `pred_joint_coords`, which is camera-frame; `joint_global_rots` never needs
+# it (see _mhr_delta_q).
+_CAM_TO_RIG_POS = np.array([1.0, -1.0, -1.0])
+
 RIG = load_rig()
 I = RIG.index_of_name
 WREST = fk_world_orientations(RIG, RIG.rest_local_q)
@@ -406,3 +412,109 @@ def test_an_unrecognised_pelvis_source_raises(monkeypatch):
     with pytest.raises(ValueError, match="PELVIS_SOURCE"):
         solve_rig_locals(RIG, rig_targets_from_mhr70(_kp(DEV_ROW)),
                          mhr_rots=_rots(DEV_ROW))
+
+
+# --------------------------------------------------------------------------
+# 5. What the pelvis->hip edge is actually measuring, and what the whole
+#    assembled body does. Both found by LOOKING at the render (CLAUDE.md
+#    rule 2) and then measuring, because the first draft of that picture
+#    made the change look like a regression and it is not.
+# --------------------------------------------------------------------------
+
+def test_the_hip_LINE_survives_and_the_pelvis_to_hip_offset_is_a_rest_gap(monkeypatch):
+    """Why `test_the_pelvis_to_hip_edge_is_the_accepted_trade` is NOT the hip
+    line going wrong.
+
+    Three rest-geometry facts, read off the two committed assets:
+
+      MHR rest `r_upleg->l_upleg` vs the rig's `right_hip->left_hip`:  0.00 deg
+      MHR rest `root->l_upleg`   vs the rig's `pelvis->left_hip`:     25.00 deg
+
+    The two skeletons agree EXACTLY on where the hip line points at rest and
+    disagree by 25 deg on where the pelvis NODE sits relative to it -- the rig
+    puts its pelvis well above the hip line (105.2 deg between pelvis->left_hip
+    and pelvis->right_hip in rest; ruling 9's own note), MHR's root does not.
+
+    So composing MHR's root delta onto the rig's pelvis reproduces the hip LINE
+    and re-places the pelvis NODE. `pelvis->hip` measures the 25 deg asset gap;
+    the hip line measures the pose. Here the hip line lands within 0.17 deg of
+    kp70 on every fixture row -- against 0.00 for the old anchor, which built
+    itself from that line and so reproduces it by construction.
+
+    Positive control: `Delta(root)` explains MHR's OWN posed hip line, taken
+    from `pred_joint_coords`, to under 0.01 deg -- so the 0.17 above is the
+    kp70/model gap and not a transfer error."""
+    L_UPLEG, R_UPLEG, MHR_ROOT_J = 2, 18, 1
+    rest = PG.load_mhr_rest()
+    mhr_hip = _unit(rest["rest_p_cm"][L_UPLEG] - rest["rest_p_cm"][R_UPLEG])
+    rig_hip = _unit(RIG.rest_world_p[I["left_hip"]] - RIG.rest_world_p[I["right_hip"]])
+    assert float(mhr_hip @ rig_hip) == pytest.approx(1.0, abs=1e-4), float(mhr_hip @ rig_hip)
+
+    mhr_ph = _unit(rest["rest_p_cm"][L_UPLEG] - rest["rest_p_cm"][MHR_ROOT_J])
+    rig_ph = _unit(RIG.rest_world_p[I["left_hip"]] - RIG.rest_world_p[I["pelvis"]])
+    gap = float(np.degrees(np.arccos(np.clip(float(mhr_ph @ rig_ph), -1, 1))))
+    assert gap == pytest.approx(25.00, abs=0.05), gap
+
+    worst_line, worst_own = 0.0, 0.0
+    for row_id in sorted(ROWS):
+        T = rig_targets_from_mhr70(_kp(row_id))
+        P = _positions(_at(PG.PELVIS_SOURCE_NPZ_ROOT, monkeypatch, row_id))
+        worst_line = max(worst_line, float(np.degrees(np.arccos(np.clip(
+            _dir_cos(P, T, "right_hip", "left_hip"), -1, 1)))))
+        # ...and the model's own root against the model's own posed hips.
+        P_mhr = np.asarray(ROWS[row_id]["pred_joint_coords"], float) * _CAM_TO_RIG_POS
+        posed = _unit(P_mhr[L_UPLEG] - P_mhr[R_UPLEG])
+        got = _unit(QM.rotate_vector(_model_root(row_id), mhr_hip))
+        worst_own = max(worst_own, float(np.degrees(np.arccos(
+            np.clip(float(got @ posed), -1, 1)))))
+    assert worst_line < 0.2, worst_line
+    assert worst_own < 0.01, worst_own                       # positive control
+
+
+def test_the_assembled_body_lands_closer_to_its_keypoints(monkeypatch):
+    """ACCEPTANCE 4, the metric the render is a picture OF: whole-body
+    position error against kp70.
+
+    Eighteen body joints, scale-free (RMS distance as a fraction of the rig's
+    own leg length) with the TARGETS aligned at the pelvis -- the rig root,
+    whose position this change does not touch, so both solves are scored in
+    one frame. This is the honest positional summary that
+    `pelvis->hip` alone is not.
+
+    Fixture (18 rows): median 0.1489 -> 0.0733, worst 0.2988 -> 0.1847,
+    better on 15 of 18 and never worse by more than 0.014.
+    Corpus (1800): median 0.0871 -> 0.0574, p90 0.2163 -> 0.0850, better on
+    1562 rows."""
+    body = ["left_hip", "right_hip", "left_knee", "right_knee", "left_ankle",
+            "right_ankle", "spine_1", "spine_2", "neck", "head",
+            "left_clavicle", "right_clavicle", "left_shoulder",
+            "right_shoulder", "left_elbow", "right_elbow", "left_wrist",
+            "right_wrist"]
+
+    def _leg(P):
+        return float(np.mean([
+            np.linalg.norm(P[I["left_knee"]] - P[I["left_hip"]])
+            + np.linalg.norm(P[I["left_ankle"]] - P[I["left_knee"]]),
+            np.linalg.norm(P[I["right_knee"]] - P[I["right_hip"]])
+            + np.linalg.norm(P[I["right_ankle"]] - P[I["right_knee"]])]))
+
+    def _rms(P, T):
+        s = _leg(P) / _leg({k: np.asarray(v, float) for k, v in T.items()})
+        off = P[I["pelvis"]] - np.asarray(T[I["pelvis"]], float) * s
+        d = [np.linalg.norm(P[I[n]] - (np.asarray(T[I[n]], float) * s + off))
+             for n in body]
+        return float(np.sqrt(np.mean(np.square(d)))) / _leg(P)
+
+    before, after = [], []
+    for row_id in sorted(ROWS):
+        T = rig_targets_from_mhr70(_kp(row_id))
+        before.append(_rms(_positions(_at(PG.PELVIS_SOURCE_HIPS, monkeypatch, row_id)), T))
+        after.append(_rms(_positions(_at(PG.PELVIS_SOURCE_NPZ_ROOT, monkeypatch, row_id)), T))
+    assert len(before) == 18                                 # positive control
+    assert float(np.median(before)) == pytest.approx(0.1489, abs=0.002)
+    assert float(np.median(after)) == pytest.approx(0.0733, abs=0.002)
+    assert max(before) == pytest.approx(0.2988, abs=0.002)   # the pike row
+    assert max(after) == pytest.approx(0.1847, abs=0.002)
+    improved = sum(a < b for a, b in zip(after, before))
+    assert improved == 15, improved
+    assert max(a - b for a, b in zip(after, before)) < 0.015
