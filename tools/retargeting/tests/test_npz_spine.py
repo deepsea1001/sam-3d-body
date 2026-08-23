@@ -207,7 +207,7 @@ else:
         capture_output=True, text=True, cwd=str(tools_dir),
         env={**os.environ, "PYTHONPATH": str(tools_dir)})
     assert out.returncode == 0, f"probe failed:\n{out.stdout}\n{out.stderr}"
-    assert "SOLVED_16_GUARD_ARMED" in out.stdout, out.stdout
+    assert "SOLVED_17_GUARD_ARMED" in out.stdout, out.stdout
 
 
 def test_identity_deltas_leave_the_spine_straight_on_the_pelvis():
@@ -784,10 +784,10 @@ def test_fallback_none_switches_only_the_spine_branch():
         assert spun < 1e-6, f"{name}'s WORLD orientation moved {spun:.3e} deg"
 
 
-def test_version_pinned_16():
+def test_version_pinned_17():
     st15 = rig_state_from_mhr70(_kp(DEV_ROW))
     st16 = rig_state_from_mhr70(_kp(DEV_ROW), mhr_rots=_rots(DEV_ROW))
-    assert st15["retargetVersion"] == 16 and st16["retargetVersion"] == 16
+    assert st15["retargetVersion"] == 17 and st16["retargetVersion"] == 17
     # ...and mhr_rots actually reaches the solve through this entry point,
     # not just through solve_rig_locals.
     assert st16["pose"]["spine_1"] != st15["pose"]["spine_1"]
