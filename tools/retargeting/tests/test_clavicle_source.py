@@ -423,11 +423,20 @@ def test_the_corrected_local_pays_protraction_for_the_ball(monkeypatch):
     exactly the currency f07064f was written to stop spending: protraction.
     Both halves are pinned. Nothing here is an improvement claim -- the
     improvement claim lives in `test_clavicle_aim_correction.py`, in the world
-    frame, where it can be checked."""
-    for rid, want in ((BICEPS, {"left": (18.33, 3.33, 7.8, 21.3, -3.7, -17.8),
-                                "right": (16.22, 1.22, 9.5, 19.7, +0.8, +15.2)}),
-                      (STANDING, {"left": (24.60, 9.60, 9.1, 23.6, -7.8, -21.9),
-                                  "right": (11.68, 0.00, 14.7, 4.1, -10.8, -1.1)})):
+    frame, where it can be checked.
+
+    RE-PINNED 2026-08-23 (task-pelvis), and the pattern of what moved is the
+    point. The AIM columns moved on every row and side, because the aim reads
+    a world keypoint through a chest that the new pelvis anchor re-oriented.
+    The cap-0 |local| and euler-Z columns -- 7.8/9.5/9.1/14.7 and
+    -3.7/+0.8/-7.8/-10.8 -- did NOT move by a single digit, on any of the four,
+    because the clavicle TRANSFER is chest-relative and cancels the pelvis
+    delta algebraically. That is the invariant test_pelvis_anchor.py asserts,
+    showing up here in four independently measured numbers."""
+    for rid, want in ((BICEPS, {"left": (18.47, 3.47, 7.8, 21.0, -3.7, -18.1),
+                                "right": (15.53, 0.53, 9.5, 19.3, +0.8, +15.2)}),
+                      (STANDING, {"left": (23.63, 8.63, 9.1, 23.5, -7.8, -21.9),
+                                  "right": (16.14, 1.14, 14.7, 4.8, -10.8, +2.3)})):
         t0, L0 = _solve(rid, cap=0.0, monkeypatch=monkeypatch)
         monkeypatch.undo()
         t1, L1 = _solve(rid)

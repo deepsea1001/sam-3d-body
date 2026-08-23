@@ -369,28 +369,51 @@ def test_rel_perjoint_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pe
     Two positive controls, because two things could be wrong independently:
     the ROW (checked against its neighbours) and the FRAME (checked against
     the absolute form the same row would give, which is what v16 first
-    shipped)."""
+    shipped).
+
+    The FRAME control has to be taken under PELVIS_SOURCE_HIPS since
+    task-pelvis (2026-08-23). Under the shipped anchor `D(pelvis)` IS
+    `Delta(root)`, so `D(pelvis) . Delta(root)^-1` is the identity and the
+    relative form lands exactly on the absolute one -- there is no frame
+    difference left to detect. Both facts are asserted here: the relative
+    frame is real when the pelvis disagrees with the model's root, and it
+    collapses to the absolute one when the pelvis agrees. See
+    test_pelvis_anchor.py and posegoblin_rig.PELVIS_SOURCE."""
     monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
     R_pose = _rots(DEV_ROW)
     R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
-    L = _solve(DEV_ROW, R_pose)
-    W = _world(L)
-    D_pelvis = _wxyz_to_mat(L[I["pelvis"]]) @ _wxyz_to_mat(Wr[I["pelvis"]]).T
     root = R_pose[1] @ R_rest[1].T
+    gaps = {}
 
-    for bone, row in (("spine_1", PG.SPINE_PERJOINT_SPINE1_ROW), ("spine_2", MHR_SPINE3)):
-        got = _wxyz_to_mat(W[I[bone]])
-        delta = R_pose[row] @ R_rest[row].T
-        want = D_pelvis @ root.T @ delta @ _wxyz_to_mat(Wr[I[bone]])
-        assert np.abs(got - want).max() < 1e-6, f"{bone} is not row {row}, pelvis-relative"
-        for other in (row - 1, row + 1):
-            alt = D_pelvis @ root.T @ (R_pose[other] @ R_rest[other].T) @ _wxyz_to_mat(Wr[I[bone]])
-            assert np.abs(got - alt).max() > 1e-3, \
-                f"{bone}: rows {row} and {other} are indistinguishable here"
-        absolute = delta @ _wxyz_to_mat(Wr[I[bone]])
-        assert np.abs(got - absolute).max() > 1e-3, \
-            f"{bone}: the relative and absolute forms are indistinguishable on this row"
+    for pelvis_source in (PG.PELVIS_SOURCE_HIPS, PG.PELVIS_SOURCE_NPZ_ROOT):
+        monkeypatch.setattr(PG, "PELVIS_SOURCE", pelvis_source)
+        L = _solve(DEV_ROW, R_pose)
+        W = _world(L)
+        D_pelvis = _wxyz_to_mat(L[I["pelvis"]]) @ _wxyz_to_mat(Wr[I["pelvis"]]).T
+        for bone, row in (("spine_1", PG.SPINE_PERJOINT_SPINE1_ROW),
+                          ("spine_2", MHR_SPINE3)):
+            got = _wxyz_to_mat(W[I[bone]])
+            delta = R_pose[row] @ R_rest[row].T
+            want = D_pelvis @ root.T @ delta @ _wxyz_to_mat(Wr[I[bone]])
+            assert np.abs(got - want).max() < 1e-6, \
+                f"{pelvis_source} {bone} is not row {row}, pelvis-relative"
+            for other in (row - 1, row + 1):
+                alt = (D_pelvis @ root.T @ (R_pose[other] @ R_rest[other].T)
+                       @ _wxyz_to_mat(Wr[I[bone]]))
+                assert np.abs(got - alt).max() > 1e-3, (
+                    f"{pelvis_source} {bone}: rows {row} and {other} are "
+                    f"indistinguishable here")
+            absolute = delta @ _wxyz_to_mat(Wr[I[bone]])
+            gaps[(pelvis_source, bone)] = float(np.abs(got - absolute).max())
+
+    for bone in ("spine_1", "spine_2"):
+        assert gaps[(PG.PELVIS_SOURCE_HIPS, bone)] > 1e-3, (
+            f"{bone}: the relative and absolute forms are indistinguishable "
+            f"under the hip-line anchor, which is where the frame differs")
+        assert gaps[(PG.PELVIS_SOURCE_NPZ_ROOT, bone)] < 1e-6, (
+            f"{bone}: the relative form did NOT collapse onto the absolute one "
+            f"under the npz pelvis ({gaps[(PG.PELVIS_SOURCE_NPZ_ROOT, bone)]:.3e})")
 
 
 def test_default_chest_is_c_spine3_relative_and_spine_1_is_its_65_percent():
@@ -497,13 +520,24 @@ def test_spine_anchors_are_c_spine1_and_c_spine3(monkeypatch):
 # to the chest. Scoring it against the row it declines to use is the point --
 # the gap IS the cost of the distribution ruling, and pinning it here is how
 # that cost stays visible instead of being argued away in a report.
+#
+# A third thing varies from 2026-08-23 (task-pelvis): the PELVIS ANCHOR each
+# mapping actually ships with. `v15` is the mapping a row with NO
+# `mhr_params_npz` blob takes, and such a row has no root rotation for the
+# pelvis either -- so v15 ships with PELVIS_SOURCE_HIPS, always, and is scored
+# with it. The other four only ever run when rotations ARE present and take
+# the shipped npz pelvis. This is not a floor being dodged: v15's spine_1 is
+# built by composing onto `A[pelvis]` (a 65% slerp, or the swing-split), so
+# "v15 spine + npz pelvis" is a spine no row can produce, and scoring it would
+# be scoring a configuration that does not exist. It is measured anyway,
+# by name, in test_the_v15_spine_is_only_scored_with_the_pelvis_it_ships_with.
 _SPINE_EDGE_SPECS = {
-    #  source          spine_1 ref row, floor,                 relative frame
-    "mhr":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
-    "hybrid":       (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, False),
-    "v15":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
-    "rel_perjoint": (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True),
-    "rel_total":    (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True),
+    #  source          spine_1 ref row, floor,        relative frame, pelvis
+    "mhr":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False, PG.PELVIS_SOURCE_NPZ_ROOT),
+    "hybrid":       (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, False, PG.PELVIS_SOURCE_NPZ_ROOT),
+    "v15":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False, PG.PELVIS_SOURCE_HIPS),
+    "rel_perjoint": (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True, PG.PELVIS_SOURCE_NPZ_ROOT),
+    "rel_total":    (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True, PG.PELVIS_SOURCE_NPZ_ROOT),
 }
 
 
@@ -515,12 +549,17 @@ def _spine_edge_cosines(row_id, source):
     Reference directions come from `pred_joint_coords`, which is CAMERA
     frame, so they take `_CAM_TO_RIG_POS`. Floors are the measured
     rest-vs-rest ceilings minus 0.03 -- see the constants above."""
-    row1, floor1, relative = _SPINE_EDGE_SPECS[source]
+    row1, floor1, relative, pelvis_source = _SPINE_EDGE_SPECS[source]
     edges = (("spine_1", "spine_2", row1, MHR_SPINE3, floor1),
              ("spine_2", "neck", MHR_SPINE3, MHR_NECK, SPINE2_NECK_FLOOR))
     rots = _rots(row_id)
     P_mhr = np.asarray(ROWS[row_id]["pred_joint_coords"], float)
-    L = _solve(row_id, rots)
+    saved_pelvis = PG.PELVIS_SOURCE
+    PG.PELVIS_SOURCE = pelvis_source
+    try:
+        L = _solve(row_id, rots)
+    finally:
+        PG.PELVIS_SOURCE = saved_pelvis
     P = fk_world_positions(RIG, {**RIG.rest_local_q, **L})
     carry = None
     if relative:
@@ -728,26 +767,38 @@ def test_the_five_mappings_are_not_the_same_measurement(monkeypatch):
 # re-parameterisation and the test asserts it as one: measured on the dev
 # row, the shoulder LOCALS move 0.32 and 15.50 deg while their WORLD
 # orientations move 2e-14 deg, and the elbows and wrists do not move at all.
-_V16_AFFECTED = ("spine_1", "spine_2", "neck", "head",
+#
+# The PELVIS and the two HIPS joined it on 2026-08-23 (task-pelvis), and this
+# is no longer only a spine branch because of it: `mhr_rots` now also anchors
+# the pelvis from the model's own root rotation (PELVIS_SOURCE_NPZ_ROOT), so
+# the pelvis's world is legitimately different between the two paths and every
+# direct child's LOCAL absorbs that. The hips are the two such children the
+# aim path solves; spine_1 was already in the list. Their WORLD orientations
+# are untouched -- the limb chains are anchored from the targets alone -- so
+# this is the same re-parameterisation the shoulders show above, measured the
+# same way: on the dev row the hip LOCALS move 19.0 deg and their world
+# orientations 0.0, and the knees and ankles do not move at all.
+_V16_AFFECTED = ("pelvis", "left_hip", "right_hip",
+                 "spine_1", "spine_2", "neck", "head",
                  "left_clavicle", "right_clavicle",
                  "left_shoulder", "right_shoulder")
 
 
 def test_fallback_none_switches_only_the_spine_branch():
     """`mhr_rots=None` really takes the v15 branch, and among the bones BOTH
-    branches solve the switch reaches exactly the spine and its descendants
-    -- nothing else.
+    branches solve the switch reaches exactly the pelvis, the spine and their
+    descendants -- nothing else.
 
     v15's own behavior is pinned by the 44 pre-existing tests, every one of
     which calls the solver without `mhr_rots` -- so what is left to prove
     here is that the branch switches at all, and that it does not leak.
 
     Deliberately NOT the claim that only spine_1 and spine_2 move: a bone's
-    local is expressed in its parent's world frame, so spine_2's four
-    descendants (`_V16_AFFECTED` above) must change with it, and a test
-    demanding otherwise would be demanding a bug. The exact set is asserted
-    rather than sampled, so a future edit that reaches one bone further
-    fails here instead of passing quietly.
+    local is expressed in its parent's world frame, so spine_2's descendants
+    -- and, since task-pelvis, the pelvis's (`_V16_AFFECTED` above) -- must
+    change with them, and a test demanding otherwise would be demanding a bug.
+    The exact set is asserted rather than sampled, so a future edit that
+    reaches one bone further fails here instead of passing quietly.
 
     Until v16 task 5 the two branches also solved the SAME 34 bones, and this
     test asserted exactly that. They no longer do, by design: `mhr_rots` now
@@ -796,3 +847,52 @@ def test_version_pinned_17():
     # ...and mhr_rots actually reaches the solve through this entry point,
     # not just through solve_rig_locals.
     assert st16["pose"]["spine_1"] != st15["pose"]["spine_1"]
+
+
+def test_the_v15_spine_is_only_scored_with_the_pelvis_it_ships_with(monkeypatch):
+    """The combination `_SPINE_EDGE_SPECS` deliberately does NOT score, scored
+    here so that the exemption is a measurement and not a hole.
+
+    v15's spine_1 is built by composing onto `A[pelvis]` -- a 65% slerp from
+    it, or the swing-split of the pelvis->chest rotation -- so it moves with
+    the pelvis anchor in a way none of the other four mappings do (their
+    spine_1 is a model row, absolute or root-relative, and their spine_2 is
+    either a model row or a landmark anchor; all four are pelvis-independent
+    in WORLD terms). Pairing it with PELVIS_SOURCE_NPZ_ROOT costs it 9 extra
+    violations and drops its mean spine_1->spine_2 cosine 0.9850 -> 0.9531.
+
+    That pairing cannot occur: a row with no `mhr_params_npz` blob takes v15
+    AND takes the hip-line pelvis, both resolved from the same `mhr_rots is
+    None` in `_anchor_deltas`. This test asserts that -- the None path really
+    does produce the hips anchor -- so the exemption above rests on a fact
+    about the solver, not on a preference."""
+    targets = rig_targets_from_mhr70(_kp(DEV_ROW))
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+    monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_NPZ_ROOT)
+    none_path = PG._anchor_deltas(RIG, targets, Wr, None)[I["pelvis"]]
+    monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_HIPS)
+    hips = PG._anchor_deltas(RIG, targets, Wr, None)[I["pelvis"]]
+    assert np.asarray(none_path, float).tobytes() == np.asarray(hips, float).tobytes()
+    # Positive control: the switch is live, so the equality above is a fact
+    # about `mhr_rots is None` and not about an inert constant.
+    monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_NPZ_ROOT)
+    with_rots = PG._anchor_deltas(RIG, targets, Wr, _rots(DEV_ROW))[I["pelvis"]]
+    assert not np.allclose(with_rots, hips, atol=1e-9)
+
+    # ...and the cost of the impossible pairing, measured rather than waved at.
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
+    spec = _SPINE_EDGE_SPECS["v15"]
+    counts, means = {}, {}
+    for ps in (PG.PELVIS_SOURCE_HIPS, PG.PELVIS_SOURCE_NPZ_ROOT):
+        monkeypatch.setitem(_SPINE_EDGE_SPECS, "v15", spec[:3] + (ps,))
+        below, cos = 0, []
+        for row_id in ROWS:
+            for label, (c, floor) in _spine_edge_cosines(row_id, "v15").items():
+                below += c < floor
+                if label == "spine_1->spine_2":
+                    cos.append(c)
+        counts[ps], means[ps] = below, float(np.mean(cos))
+    assert counts[PG.PELVIS_SOURCE_HIPS] == 7
+    assert counts[PG.PELVIS_SOURCE_NPZ_ROOT] == 16
+    assert means[PG.PELVIS_SOURCE_HIPS] == pytest.approx(0.9850, abs=0.002)
+    assert means[PG.PELVIS_SOURCE_NPZ_ROOT] == pytest.approx(0.9531, abs=0.002)

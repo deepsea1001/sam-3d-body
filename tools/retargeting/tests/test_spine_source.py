@@ -167,13 +167,23 @@ def test_hybrid_keeps_spine_2_on_v15s_landmark_anchor(monkeypatch):
 
 
 def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
-    """SPINE_SOURCE_V15 with mhr_rots present == the mhr_rots=None SPINE,
-    exactly -- while the other v16 rotation transfers still run off those same
-    rotations.
+    """SPINE_SOURCE_V15 + PELVIS_SOURCE_HIPS with mhr_rots present == the
+    mhr_rots=None SPINE, exactly -- while the other v16 rotation transfers
+    still run off those same rotations.
 
     This is the fallback the decision rule reserves ("v16 ships its fingers
     and its plumbing, the spine unchanged"), so the spine half must be a real
     identity and not merely a close one.
+
+    It became a TWO-constant revert on 2026-08-23 (task-pelvis). The v15 spine
+    construction reads `A[pelvis]` -- spine_1 is a 65% slerp from it, and
+    spine_2's landmark anchor is world-absolute so its LOCAL is expressed
+    against it -- and `mhr_rots` now anchors the pelvis from the model's own
+    root rotation. Flipping SPINE_SOURCE alone therefore no longer reproduces
+    the v15 spine: measured on DEV_ROW, `pelvis`, both hips, `spine_1` and
+    `spine_2` all move. Flipping PELVIS_SOURCE with it restores the identity
+    exactly, and the test asserts BOTH halves so the extra constant can never
+    be forgotten silently.
 
     The fingers were always excluded from that identity -- they are a separate
     transfer keyed on `mhr_rots`, not on SPINE_SOURCE -- and since R15 the two
@@ -206,6 +216,17 @@ def test_v15_source_reproduces_the_none_path_spine_exactly(monkeypatch):
     to the clavicle by the spine above it."""
     v15 = _solve(DEV_ROW, None)
     monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
+
+    # Half one: SPINE_SOURCE alone is NOT enough any more, and exactly which
+    # bones it leaves behind is stated rather than implied.
+    monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_NPZ_ROOT)
+    spine_only = _solve(DEV_ROW, _rots(DEV_ROW))
+    left = {RIG.name[i] for i in v15
+            if not np.allclose(v15[i], spine_only[i], atol=1e-12)}
+    assert left == {"pelvis", "left_hip", "right_hip", "spine_1", "spine_2"}, left
+
+    # Half two: with the pelvis reverted too, the identity is exact again.
+    monkeypatch.setattr(PG, "PELVIS_SOURCE", PG.PELVIS_SOURCE_HIPS)
     both = _solve(DEV_ROW, _rots(DEV_ROW))
 
     # Index-keyed, never name-keyed: two rig bones share the name "joint7".
@@ -264,30 +285,58 @@ def test_real_total_moves_only_the_distribution_not_the_chest(monkeypatch):
 
 
 def test_rel_perjoint_carries_the_model_relative_to_our_own_pelvis(monkeypatch):
-    """The DEFAULT: each spine bone's world orientation is our solved
-    pelvis's delta composed with the model's ROOT-RELATIVE rotation.
+    """Each spine bone's world orientation is our solved pelvis's delta
+    composed with the model's ROOT-RELATIVE rotation.
 
     Stated as the difference from SPINE_SOURCE_MHR, which is the whole
     content of the change: the same row 37 reaches spine_2 both ways, and
-    the two differ by exactly D(pelvis) . Delta(root)^-1."""
+    the two differ by exactly D(pelvis) . Delta(root)^-1.
+
+    THAT CARRY IS NOW THE IDENTITY under the shipped pelvis anchor, and the
+    test asserts it in both directions rather than only the flattering one.
+    Since task-pelvis (2026-08-23) `A[pelvis]` IS `Delta(root)`, so
+    `D(pelvis) . Delta(root)^-1` cancels and the relative transfer lands
+    exactly where the absolute one does. That is not a defect and it is not a
+    coincidence -- the relative form exists to survive a WRONG pelvis
+    (task-reltotal), and a pelvis that agrees with the model's root is
+    precisely the case where there is nothing left for it to survive. The
+    convergence is the strongest available evidence that the two designs
+    were solving the same problem from opposite ends.
+
+    Under PELVIS_SOURCE_HIPS the carry is a real 19.0 deg rotation on this
+    row, which is what keeps the identity above a meaningful measurement
+    rather than a tautology, so both anchors are exercised here."""
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
     rots = _rots(DEV_ROW)
+    ident = np.array([1.0, 0.0, 0.0, 0.0])
 
-    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
-    absolute = _world(_solve(DEV_ROW, rots))
-    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
-    L = _solve(DEV_ROW, rots)
-    relative = _world(L)
+    def _carry_and_chest(pelvis_source):
+        monkeypatch.setattr(PG, "PELVIS_SOURCE", pelvis_source)
+        monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_MHR)
+        absolute = _world(_solve(DEV_ROW, rots))
+        monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
+        L = _solve(DEV_ROW, rots)
+        relative = _world(L)
+        carry = QM.multiply(
+            QM.multiply(L[I["pelvis"]], QM.conjugate(Wr[I["pelvis"]])),
+            QM.conjugate(PG._mhr_delta_q(rots, 1)))
+        want = QM.multiply(carry, absolute[I["spine_2"]])
+        assert _quat_deg(relative[I["spine_2"]], want) < 1e-6, (
+            f"{pelvis_source}: spine_2 is not the absolute transfer carried by "
+            f"D(pelvis) . Delta(root)^-1")
+        return carry, _quat_deg(relative[I["spine_2"]], absolute[I["spine_2"]])
 
-    carry = QM.multiply(
-        QM.multiply(L[I["pelvis"]], QM.conjugate(Wr[I["pelvis"]])),
-        QM.conjugate(PG._mhr_delta_q(rots, 1)))
-    want = QM.multiply(carry, absolute[I["spine_2"]])
-    assert _quat_deg(relative[I["spine_2"]], want) < 1e-6, \
-        "spine_2 is not the absolute transfer carried by D(pelvis) . Delta(root)^-1"
-    # Positive control: the carry is a real rotation on this row, so the
-    # assertion above is not satisfied by carry == identity.
-    assert _quat_deg(carry, np.array([1.0, 0.0, 0.0, 0.0])) > 5.0
+    # The hip-line anchor: the carry is a real rotation, so the identity above
+    # is not satisfied by carry == identity, and relative != absolute.
+    carry, gap = _carry_and_chest(PG.PELVIS_SOURCE_HIPS)
+    assert _quat_deg(carry, ident) == pytest.approx(18.99, abs=0.05)
+    assert gap == pytest.approx(18.99, abs=0.05)
+
+    # The shipped anchor: the carry IS the identity and the two mappings
+    # coincide. Asserted, because it is the design's own prediction.
+    carry, gap = _carry_and_chest(PG.PELVIS_SOURCE_NPZ_ROOT)
+    assert _quat_deg(carry, ident) < 1e-9, _quat_deg(carry, ident)
+    assert gap < 1e-9, gap
 
 
 def test_rel_total_keeps_the_chest_and_splits_it(monkeypatch):
@@ -333,13 +382,53 @@ def test_every_source_is_a_different_spine(monkeypatch):
     """Positive control for every monkeypatch above: the switch actually
     switches. Each pair of mappings must put spine_1 somewhere visibly
     different on a real row -- otherwise the tests above could all be
-    passing against one unchanged code path."""
-    got = {}
-    for src in sorted(PG._SPINE_SOURCES):
-        monkeypatch.setattr(PG, "SPINE_SOURCE", src)
-        got[src] = _world(_solve(DEV_ROW, _rots(DEV_ROW)))[I["spine_1"]]
-    pairs = [(a, b) for a in got for b in got if a < b]
+    passing against one unchanged code path.
+
+    That is now a property OF THE PELVIS ANCHOR, and both cases are asserted.
+
+    Under PELVIS_SOURCE_HIPS all fifteen pairs are distinct, as they always
+    were. Under the shipped PELVIS_SOURCE_NPZ_ROOT some of them merge, and
+    they merge for a reason that is arithmetic rather than accidental: with
+    `A[pelvis] == Delta(root)`, every RELATIVE mapping's
+    `A[pelvis] . conj(Delta(root)) . Delta(row)` collapses to `Delta(row)` --
+    the ABSOLUTE form. So `rel_perjoint` (spine_1 <- row 36, relative) becomes
+    `hybrid` (spine_1 <- row 36, absolute) exactly, and at spine_2 both
+    relative mappings become `mhr` (row 37).
+
+    The merged pairs are pinned as an exact SET, not tolerated in bulk: a
+    future change that collapsed a different pair -- two mappings genuinely
+    losing their distinction -- still fails here."""
+    def _spines(pelvis_source):
+        monkeypatch.setattr(PG, "PELVIS_SOURCE", pelvis_source)
+        got = {}
+        for src in sorted(PG._SPINE_SOURCES):
+            monkeypatch.setattr(PG, "SPINE_SOURCE", src)
+            W = _world(_solve(DEV_ROW, _rots(DEV_ROW)))
+            got[src] = (W[I["spine_1"]], W[I["spine_2"]])
+        return got
+
+    hips = _spines(PG.PELVIS_SOURCE_HIPS)
+    npz = _spines(PG.PELVIS_SOURCE_NPZ_ROOT)
+    pairs = [(a, b) for a in hips for b in hips if a < b]
     assert len(pairs) == 15                                       # positive control
     for a, b in pairs:
-        d = _quat_deg(got[a], got[b])
+        d = _quat_deg(hips[a][0], hips[b][0])
         assert d > 1.0, f"{a} and {b} put spine_1 {d:.4f} deg apart -- not distinct"
+
+    def _merged(got, i):
+        return {(a, b) for a, b in pairs if _quat_deg(got[a][i], got[b][i]) < 1e-9}
+
+    # spine_1: nothing merged before, exactly one pair merges after.
+    assert _merged(hips, 0) == set()
+    assert _merged(npz, 0) == {("hybrid", "rel_perjoint")}, _merged(npz, 0)
+
+    # spine_2: four pairs already shared a chest before (the two mappings that
+    # keep v15's landmark anchor, and the two relative ones that share row 37
+    # composed on the same pelvis). The NEW merges are the two that put the
+    # relative chest onto the absolute one.
+    assert _merged(npz, 1) - _merged(hips, 1) == {("mhr", "rel_perjoint"),
+                                                  ("mhr", "rel_total")}
+    assert _merged(hips, 1) - _merged(npz, 1) == set()
+    # ...and 14 of 15 still differ at spine_1, so this is a NAMED collapse and
+    # not a spine that stopped varying with the switch.
+    assert len(pairs) - len(_merged(npz, 0)) == 14

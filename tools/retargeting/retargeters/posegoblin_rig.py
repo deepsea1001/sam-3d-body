@@ -463,6 +463,61 @@ _SPINE_SOURCES = frozenset({SPINE_SOURCE_MHR, SPINE_SOURCE_HYBRID,
                             SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL})
 
 
+# Where the pelvis's WORLD ORIENTATION comes from. Same switch shape as
+# SPINE_SOURCE above, and for the same reason: two constructions of one
+# anchor, one of them the shipped default, both live and both tested.
+#
+# THE DEFECT the default exists for. The pelvis was the last anchor solved
+# purely from keypoints. `_orthonormal_frame_from_hips_and_up` fixes ONE axis
+# from the hip line -- which MHR-70 localises well -- and takes the PITCH
+# about it from the hipmid->spine_1 chord, which MHR-70 does not localise at
+# all: there are no mid-spine keypoints, `spine_1` is INTERPOLATED by
+# MHR70Retargeter.compute_joint_positions, and on a prone, piked or crawling
+# body that chord is both short and nearly along the camera ray. The frame
+# comes out perfectly orthonormal and pitched wrong, and since every other
+# bone composes onto the pelvis, the whole assembled body inherits the error:
+# correct relative bends at a wrong global attitude, which is what Scott
+# reads off the viewer.
+#
+# Measured against MHR's own root rotation (`_mhr_delta_q(m, _MHR_ROOT)`),
+# over the 1800-row motion corpus: median 8.75 deg, p90 33.48, max 65.90 --
+# 45.2% of rows over 10 deg. The two worst named rows are 0693dd37 (deep
+# pike, 65.90 -- the corpus maximum) and 1c3ba88d (crawl, 53.24), both in
+# tests/fixtures/mhr_npz_rows.json.
+#
+# THE FIX is one expression: the pelvis's world DELTA is Delta(root)
+# outright, so its world ORIENTATION is Delta(root) . pelvis_rest_world. No
+# frame conversion -- MHR model space and rig space are the same ROTATIONAL
+# frame; see `_mhr_delta_q`'s docstring for the two independent measurements
+# of that, and do not insert a flip here for the same reasons stated there.
+#
+# WHAT IT DOES NOT TOUCH. The pelvis POSITION: `pelvisPosition` is the rig's
+# own REST pelvis position (ruling 10) and `groundY` is read off the targets;
+# neither reads this delta. And the two RELATIVE transfers downstream --
+# SPINE_SOURCE_REL_TOTAL's chest and the clavicles' chest-relative rotation
+# -- compose ONTO the pelvis, so `conj(pelvis_world) . chest_world` and
+# `conj(chest_world) . clavicle_world` cancel this delta algebraically. The
+# curved back and the shoulder girdle are bit-identical under both sources.
+# That is exactly what those transfers were built relative FOR (task-reltotal:
+# "to survive pelvis error"), and tests/test_pelvis_anchor.py asserts it.
+#
+# WHAT IT COSTS, stated plainly. `pelvis->hip` as a world DIRECTION was
+# reproduced by the old anchor almost by construction and is not any more: it
+# now degrades by exactly however far MHR's root sits from the observed hip
+# line. Same shape as the clavicle transfer's trade (_CLAV_AIM_CORRECTION_
+# MAX_DEG above) -- a world-position edge given up for a rotation the eye
+# reads as the body's global attitude. It is reported, not gated.
+PELVIS_SOURCE_HIPS = "hips"          # v15..v17: the hip-line frame above
+PELVIS_SOURCE_NPZ_ROOT = "npz_root"  # THE DEFAULT: Delta(root), the model's own
+
+# THE DEFAULT since 2026-08-23 (task-pelvis). Flipping this back to
+# PELVIS_SOURCE_HIPS restores the previous anchor exactly -- one line, and
+# every test for that construction is still live.
+PELVIS_SOURCE = PELVIS_SOURCE_NPZ_ROOT
+
+_PELVIS_SOURCES = frozenset({PELVIS_SOURCE_HIPS, PELVIS_SOURCE_NPZ_ROOT})
+
+
 def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
     """World rotation delta for MHR skeleton *row*, as [w,x,y,z].
 
@@ -906,7 +961,22 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
     rest = rig.rest_world_p
     A: dict[int, np.ndarray] = {}
 
-    if all(k in targets for k in (li["left_hip"], li["right_hip"], li["spine_1"])):
+    # A row with no `mhr_params_npz` blob has no root rotation to read, so it
+    # takes the hip-line construction whatever the switch says -- resolved
+    # here, exactly as `source` is for the spine below, so both branches read
+    # ONE variable. See PELVIS_SOURCE for the defect this exists for.
+    pelvis_source = PELVIS_SOURCE if mhr_rots is not None else PELVIS_SOURCE_HIPS
+    if pelvis_source not in _PELVIS_SOURCES:
+        raise ValueError(
+            f"PELVIS_SOURCE is {pelvis_source!r} -- expected one of "
+            f"{sorted(_PELVIS_SOURCES)}. Falling through to the hip line on a "
+            f"typo would ship a different pelvis than the constant names, "
+            f"undetectably -- and every bone in the rig composes onto it.")
+    if pelvis_source == PELVIS_SOURCE_NPZ_ROOT:
+        # The model's own root rotation, as a rig-frame world delta. The
+        # pelvis ORIENTATION only; its POSITION stays where ruling 10 put it.
+        A[li["pelvis"]] = _mhr_delta_q(mhr_rots, _MHR_ROOT)
+    elif all(k in targets for k in (li["left_hip"], li["right_hip"], li["spine_1"])):
         fr = _orthonormal_frame_from_hips_and_up(
             rest, li["left_hip"], li["right_hip"], li["spine_1"])
         ft = _orthonormal_frame_from_hips_and_up(
