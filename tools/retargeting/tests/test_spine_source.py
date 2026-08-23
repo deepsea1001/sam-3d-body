@@ -11,6 +11,14 @@ named mappings behind `SPINE_SOURCE` instead of one hardcoded branch:
                          construction
     SPINE_SOURCE_V15     both bones from v15, even with mhr_rots present
 
+Two more arrived once uncontaminated ground truth existed (task 6b) and
+once Scott ruled on the distribution (2026-08-23):
+
+    SPINE_SOURCE_REL_PERJOINT  each bone takes its own MHR row, root-relative,
+                               composed onto the pelvis we solved
+    SPINE_SOURCE_REL_TOTAL     the same chest as REL_PERJOINT, split 65/35
+                               across the two bones  -- THE DEFAULT
+
 Which one SHIPS is not settled here and these tests deliberately do not
 settle it: the hand-posed captures were authored on top of a v15-applied
 pose (the review server caches retargetVersion 15 at import), so v15's
@@ -76,19 +84,30 @@ def _world(local_q):
     return fk_world_orientations(RIG, {**RIG.rest_local_q, **local_q})
 
 
-def test_default_is_the_relative_per_joint_mapping():
-    """The default is pinned, and pinned to the mapping that measured best
-    on the spine-zeroed captures: relative per-joint, spine_1 from c_spine2.
+def test_default_is_the_relative_total_mapping():
+    """The default is pinned, and pinned to the relative TOTAL: the chest
+    that measured best on the spine-zeroed captures (28.0 deg mean total
+    error against v15's 39.3 and the originally-shipped absolute mapping's
+    38.0), distributed 65/35 the way Scott's own rig control distributes it.
 
-    28.0 deg mean total chest-vs-pelvis error against v15's 39.3 and the
-    originally-shipped absolute mapping's 38.0 -- see the module docstring
-    and the task-6b report. A default that drifts silently is exactly what
-    this pin exists to stop."""
-    assert PG.SPINE_SOURCE == PG.SPINE_SOURCE_REL_PERJOINT
+    Re-pinned 2026-08-23 from SPINE_SOURCE_REL_PERJOINT, which shares this
+    chest exactly and differs only in the distribution -- and which drove
+    spine_2 into 20.9 deg of EXTENSION on a forward fold wherever the
+    model's own curvature is non-monotonic (tests/test_spine_rel_total.py).
+    `SPINE_PERJOINT_SPINE1_ROW` is pinned alongside it because REL_PERJOINT
+    is still reachable, still tested, and still the one-constant revert.
+
+    A default that drifts silently is exactly what this pin exists to
+    stop."""
+    assert PG.SPINE_SOURCE == PG.SPINE_SOURCE_REL_TOTAL
     assert PG.SPINE_PERJOINT_SPINE1_ROW == 36
+    assert PG._SPINE1_SHARE == 0.65
     assert {PG.SPINE_SOURCE_MHR, PG.SPINE_SOURCE_HYBRID, PG.SPINE_SOURCE_V15,
-            PG.SPINE_SOURCE_REAL_TOTAL, PG.SPINE_SOURCE_REL_PERJOINT} == \
-        {"mhr", "hybrid", "v15", "real_total", "rel_perjoint"}
+            PG.SPINE_SOURCE_REAL_TOTAL, PG.SPINE_SOURCE_REL_PERJOINT,
+            PG.SPINE_SOURCE_REL_TOTAL} == \
+        {"mhr", "hybrid", "v15", "real_total", "rel_perjoint", "rel_total"}
+    assert PG._SPINE_SOURCES == {"mhr", "hybrid", "v15", "real_total",
+                                 "rel_perjoint", "rel_total"}
 
 
 def test_unknown_spine_source_raises(monkeypatch):
@@ -238,6 +257,45 @@ def test_rel_perjoint_carries_the_model_relative_to_our_own_pelvis(monkeypatch):
     assert _quat_deg(carry, np.array([1.0, 0.0, 0.0, 0.0])) > 5.0
 
 
+def test_rel_total_keeps_the_chest_and_splits_it(monkeypatch):
+    """THE DEFAULT, stated as the difference from SPINE_SOURCE_REL_PERJOINT,
+    which is the whole content of the change: the same chest, spent
+    differently.
+
+    Half one -- spine_2's world orientation is bit-identical to
+    REL_PERJOINT's, so everything measured on the chest (the 28.0 deg total
+    error, both clavicles, the neck) carries over untouched.
+
+    Half two -- spine_1's world delta is the geodesic `_SPINE1_SHARE` of the
+    way from the pelvis's to the chest's, so the two bones share one axis
+    and the local angles come out 65/35 by construction.
+
+    Positive control on both: spine_1 must MOVE between the two mappings,
+    and the split must not be the trivial one (a chest that equalled the
+    pelvis would satisfy the second half vacuously)."""
+    rots = _rots(DEV_ROW)
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
+    per = _solve(DEV_ROW, rots)
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_TOTAL)
+    tot = _solve(DEV_ROW, rots)
+    wper, wtot = _world(per), _world(tot)
+
+    assert _quat_deg(wper[I["spine_2"]], wtot[I["spine_2"]]) < 1e-9, \
+        "rel_total moved the chest -- it is only supposed to move spine_1"
+    moved = _quat_deg(wper[I["spine_1"]], wtot[I["spine_1"]])
+    assert moved > 1.0, f"spine_1 moved only {moved:.4f} deg -- the branch did not switch"
+
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+    D = {n: QM.multiply(wtot[I[n]], QM.conjugate(Wr[I[n]]))
+         for n in ("pelvis", "spine_1", "spine_2")}
+    want = PG._slerp(D["pelvis"], D["spine_2"], PG._SPINE1_SHARE)
+    assert _quat_deg(D["spine_1"], want) < 1e-9, "spine_1 is not the 65% geodesic"
+    # ...and the geodesic is a real one on this row: the chest is 20.9 deg
+    # off the pelvis, so 65% of it is not 0% and not 100%.
+    assert _quat_deg(D["pelvis"], D["spine_2"]) > 5.0
+    assert _quat_deg(D["pelvis"], D["spine_1"]) > 1.0
+
+
 def test_every_source_is_a_different_spine(monkeypatch):
     """Positive control for every monkeypatch above: the switch actually
     switches. Each pair of mappings must put spine_1 somewhere visibly
@@ -248,7 +306,7 @@ def test_every_source_is_a_different_spine(monkeypatch):
         monkeypatch.setattr(PG, "SPINE_SOURCE", src)
         got[src] = _world(_solve(DEV_ROW, _rots(DEV_ROW)))[I["spine_1"]]
     pairs = [(a, b) for a in got for b in got if a < b]
-    assert len(pairs) == 10                                       # positive control
+    assert len(pairs) == 15                                       # positive control
     for a, b in pairs:
         d = _quat_deg(got[a], got[b])
         assert d > 1.0, f"{a} and {b} put spine_1 {d:.4f} deg apart -- not distinct"

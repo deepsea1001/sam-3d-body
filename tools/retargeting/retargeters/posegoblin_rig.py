@@ -69,6 +69,14 @@ the full parametric solve in its `mhr_params_npz` blob -- see
 `mhr_rots_from_npz`, `load_mhr_rest` and `_mhr_delta_q` below. Rows without
 the blob still take the v15 path, which is kept intact under `mhr_rots is
 None`.
+
+WHICH of the model's rotations, and in what frame, is a switch --
+`SPINE_SOURCE`, six named mappings, so every comparison behind the two
+rulings stays reproducible instead of living in a scratch branch. The
+default takes the model's chest rotation RELATIVE TO ITS OWN ROOT, composes
+it onto the pelvis we actually solved, and splits that total 65/35 between
+the mannequin's two spine bones. See the block above `SPINE_SOURCE` for
+both rulings and what each costs.
 """
 from collections import Counter
 from dataclasses import dataclass
@@ -295,6 +303,13 @@ SPINE_SOURCE_REL_PERJOINT = "rel_perjoint"
                                 # bone takes the model's rotation RELATIVE TO
                                 # ITS OWN ROOT, composed onto the pelvis we
                                 # actually solved -- see _anchor_deltas.
+SPINE_SOURCE_REL_TOTAL = "rel_total"
+                                # THE DEFAULT. REL_PERJOINT's chest exactly --
+                                # the same root-relative Delta(37) composed
+                                # onto our pelvis -- with that TOTAL split
+                                # 65/35 across the two bones instead of
+                                # spine_1 taking a second MHR row of its own.
+                                # See _anchor_deltas and the block below.
 
 # Which MHR row drives spine_1 under SPINE_SOURCE_REL_PERJOINT. 36
 # (c_spine2), not the 35 (c_spine1) v16 first shipped: the mannequin has two
@@ -305,7 +320,39 @@ SPINE_SOURCE_REL_PERJOINT = "rel_perjoint"
 # rest ceiling across all fifteen captures; row 35 reaches only 0.9593.
 SPINE_PERJOINT_SPINE1_ROW = 36
 
-# THE DEFAULT, and the measurement that chose it (task-6b report).
+# THE DEFAULT is SPINE_SOURCE_REL_TOTAL. Two separate rulings sit behind
+# it: WHICH TOTAL (task 6b, measured) and HOW IT IS DISTRIBUTED (Scott,
+# 2026-08-23, from a pose he corrected by hand). Reverting either is one
+# constant -- REL_TOTAL and REL_PERJOINT share their chest exactly, so
+# flipping between them changes the DISTRIBUTION and nothing else.
+#
+# --- the distribution, and the defect that settled it -------------------
+#
+# Row 0693dd37, a deep pike fold (captures -37 solver, -38 his correction).
+# MHR's root-relative delta at c_spine2 (row 36) is 87.8 deg while at
+# c_spine3 (row 37) it is only 66.5: the human's spine curvature is NOT
+# monotonic along its own column, and 490 of the 1800 motion corpus rows
+# are like it (27.2%; median overshoot 2.3 deg, max 21.3). Per-joint
+# transfer must then put all 87.8 deg into spine_1 and drive spine_2
+# BACKWARDS to land the chest on row 37 -- measured -20.9 deg of EXTENSION
+# on a forward fold, where Scott hand-posed +21.5 of flexion. The chest was
+# right; the column read broken.
+#
+# The TOTAL was right too: 66.5 deg against Scott's own 61.3. So REL_TOTAL
+# keeps that total and spends it the way the rig itself does. `_SPINE1_SHARE`
+# is not a fudge here -- his six spine-zeroed captures land spine_1 at 0.650
+# +/- 0.002 of the total local bend across -37 deg of extension, +76 of
+# flexion and 51 of lateral bend. A geodesic split reproduces that exactly,
+# on every axis, by construction. Under REL_PERJOINT the same quantity ranges
+# 0.598 to 0.967 over the fixture rows.
+#
+# What that costs, stated plainly: the mannequin's spine_1->spine_2 SEGMENT
+# no longer reproduces MHR's c_spine2->c_spine3 direction (it cannot -- a
+# 65% interpolation is not an 87.8 deg joint), and test_npz_spine.py pins
+# the resulting floor violations by name. The chest end, which carries the
+# neck and both clavicles, is untouched.
+#
+# --- the total (task-6b report) ----------------------------------------
 #
 # The metric is the TOTAL chest-versus-pelvis rotation -- what the eye reads
 # as a curved back -- scored against six captures Scott hand-posed with the
@@ -313,6 +360,17 @@ SPINE_PERJOINT_SPINE1_ROW = 36
 # with no solver output underneath it. Mean error over those six:
 #
 #     v15 39.3 | mhr(35,37) 38.0 | hybrid 39.3 | real_total 39.3 | REL 28.0
+#
+# REL_TOTAL scores 28.0 as well, and necessarily: it is a redistribution of
+# REL_PERJOINT's chest, and a redistribution cannot move a chest-vs-pelvis
+# total. It is the PER-JOINT error that moves, on the clean six: spine_1
+# 19.90 -> 18.15, spine_2 18.38 -> 10.67, all-19-bones 17.25 -> 16.76, and
+# the realised spine_1 share 0.784 -> 0.650 against Scott's own 0.650.
+#
+# `real_total` in that table is the same total in the ABSOLUTE frame: it
+# drives v15's split from the model's real pelvis->chest rotation but leaves
+# spine_2 on v15's landmark anchor, so it inherits v15's chest error exactly.
+# Relative-total was the untested cell of that sweep, not a re-run of it.
 #
 # `hybrid` and `real_total` tie v15 exactly, and necessarily: both leave
 # spine_2's world anchor at v15's landmark construction and only
@@ -340,17 +398,18 @@ SPINE_PERJOINT_SPINE1_ROW = 36
 # had already applied, and that server caches `retargetVersion 15` at
 # import -- so those captures are v15's own output plus a partial
 # correction, and v15's error against them is a LOWER BOUND, not an
-# estimate. Per-joint LOCAL error is confounded too, in a second way: Scott
-# poses with a control that distributes bend 65/35 between the two bones
-# because it is convenient and roughly anatomical, so per-joint error
-# penalises any method that distributes differently for reasons unrelated
-# to whether the pose is right. `provenance` on every entry in
+# estimate. Per-joint LOCAL error was reported as confounded in 6b, and the
+# confound is real -- the 65/35 split is Scott's posing control, not anatomy,
+# so it penalises any method that distributes differently. What 6b could not
+# know is that he WANTS that control's distribution in the solve as well; he
+# ruled so on 2026-08-23, which is what promotes REL_TOTAL over REL_PERJOINT
+# above. `provenance` on every entry in
 # tests/fixtures/ground_truth_captures.json says which set a capture is in.
-SPINE_SOURCE = SPINE_SOURCE_REL_PERJOINT
+SPINE_SOURCE = SPINE_SOURCE_REL_TOTAL
 
 _SPINE_SOURCES = frozenset({SPINE_SOURCE_MHR, SPINE_SOURCE_HYBRID,
                             SPINE_SOURCE_V15, SPINE_SOURCE_REAL_TOTAL,
-                            SPINE_SOURCE_REL_PERJOINT})
+                            SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL})
 
 
 def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
@@ -880,22 +939,57 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             f"Falling through to v15 on a typo would ship a different spine than "
             f"the constant names, undetectably.")
     pv0 = li["pelvis"]
-    if source == SPINE_SOURCE_REL_PERJOINT and pv0 in A:
-        # Per-joint, but RELATIVE. SPINE_SOURCE_MHR applies Delta(row) as an
-        # absolute world rotation while our pelvis is anchored independently
-        # from the hip keypoints -- so the chest lands right in world terms
-        # and wrong relative to the pelvis we actually placed, and the
-        # RELATIVE bend (the thing the eye reads as a curved back) absorbs
-        # the whole discrepancy. Measured: on the three spine-zeroed captures
-        # where our pelvis is furthest from the model's root, the absolute
-        # transfer throws away half to two thirds of the bend the model
-        # reports. Composing the model's root-relative rotation onto OUR
-        # pelvis removes that failure mode by construction.
+    if source in (SPINE_SOURCE_REL_PERJOINT, SPINE_SOURCE_REL_TOTAL) and pv0 in A:
+        # RELATIVE, both of them, and they share this chest EXACTLY.
+        #
+        # SPINE_SOURCE_MHR applies Delta(row) as an absolute world rotation
+        # while our pelvis is anchored independently from the hip keypoints
+        # -- so the chest lands right in world terms and wrong relative to
+        # the pelvis we actually placed, and the RELATIVE bend (the thing
+        # the eye reads as a curved back) absorbs the whole discrepancy.
+        # Measured: on the three spine-zeroed captures where our pelvis is
+        # furthest from the model's root, the absolute transfer throws away
+        # half to two thirds of the bend the model reports. Composing the
+        # model's root-relative rotation onto OUR pelvis removes that
+        # failure mode by construction.
+        #
+        # spine_2 is that composition at c_spine3 under BOTH mappings, from
+        # this one expression, so the total chest-vs-pelvis rotation -- the
+        # metric that chose the relative frame -- and everything hanging off
+        # spine_2 (the neck, both clavicles, and the shoulders through them)
+        # are bit-identical between them. Only the DISTRIBUTION differs.
         root_d = QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_ROOT))
-        for bone, row in (("spine_1", SPINE_PERJOINT_SPINE1_ROW),
-                          ("spine_2", _MHR_SPINE_2)):
-            A[li[bone]] = QuaternionMath.multiply(
-                A[pv0], QuaternionMath.multiply(root_d, _mhr_delta_q(mhr_rots, row)))
+        chest = QuaternionMath.multiply(
+            A[pv0], QuaternionMath.multiply(root_d,
+                                            _mhr_delta_q(mhr_rots, _MHR_SPINE_2)))
+        A[s2] = chest
+        if source == SPINE_SOURCE_REL_PERJOINT:
+            # spine_1 takes its OWN MHR row, c_spine2. Faithful to the
+            # model's intermediate joint -- and exactly what breaks when
+            # the model's curvature is not monotonic along its column:
+            # where |rel(36)| exceeds |rel(37)| (490 of 1800 corpus rows)
+            # spine_1 overshoots the total and spine_2 must run BACKWARDS
+            # to land on it. See the SPINE_SOURCE block above.
+            A[li["spine_1"]] = QuaternionMath.multiply(
+                A[pv0], QuaternionMath.multiply(
+                    root_d, _mhr_delta_q(mhr_rots, SPINE_PERJOINT_SPINE1_ROW)))
+        else:
+            # THE DEFAULT: spend the same total the way the rig itself
+            # does. A geodesic split puts both bones on ONE axis, so
+            # spine_1 takes `_SPINE1_SHARE` of the angle and spine_2 the
+            # rest -- flexion, lateral bend and twist alike, which is what
+            # Scott's spine-zeroed captures measure (0.650 +/- 0.002 across
+            # every axis). Both bones then bend the same way, always; a
+            # non-monotonic model column has nowhere to express itself, and
+            # that is the point rather than a loss.
+            #
+            # NOT the swing-only split below: that one deliberately keeps
+            # TWIST at the chest because v15's total is a landmark
+            # construction dominated by spurious hips-vs-clavicle twist.
+            # This total is the model's own rotation, whose twist is real
+            # spine twist, and Scott's captures distribute it 65/35 like
+            # everything else.
+            A[li["spine_1"]] = _slerp(A[pv0], chest, _SPINE1_SHARE)
     elif source == SPINE_SOURCE_MHR:
         # v16 (task 4): the mannequin's spine posed from the MHR model's own
         # joint rotations, replacing the chest construction and the

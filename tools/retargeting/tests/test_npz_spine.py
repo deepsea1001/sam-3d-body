@@ -350,9 +350,16 @@ def test_global_arch_transfers_to_spine(monkeypatch):
         assert _quat_deg(d, qG) < 0.5, f"{name}: {_quat_deg(d, qG):.3f} deg off G"
 
 
-def test_default_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pelvis():
-    """Which MHR rows drive the two spine bones under the DEFAULT mapping,
+def test_rel_perjoint_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pelvis(
+        monkeypatch):
+    """Which MHR rows drive the two spine bones under SPINE_SOURCE_REL_PERJOINT,
     and in which frame -- pinned as a contract.
+
+    This WAS the default's contract until 2026-08-23, when the default moved
+    to SPINE_SOURCE_REL_TOTAL. The spine_2 half of it still is the default's
+    -- see the test below, which asserts exactly that and takes spine_1 apart
+    differently. Kept, monkeypatched, rather than shrunk: the mapping is
+    still reachable and still the one-constant revert.
 
     W(bone) must be D(pelvis) . Delta(root)^-1 . Delta(row) . W_rest(bone):
     the model's rotation RELATIVE TO ITS OWN ROOT, carried by the pelvis we
@@ -363,6 +370,7 @@ def test_default_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pelvis(
     the ROW (checked against its neighbours) and the FRAME (checked against
     the absolute form the same row would give, which is what v16 first
     shipped)."""
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_REL_PERJOINT)
     R_pose = _rots(DEV_ROW)
     R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
     Wr = fk_world_orientations(RIG, RIG.rest_local_q)
@@ -383,6 +391,50 @@ def test_default_spine_anchors_are_c_spine2_and_c_spine3_relative_to_the_pelvis(
         absolute = delta @ _wxyz_to_mat(Wr[I[bone]])
         assert np.abs(got - absolute).max() > 1e-3, \
             f"{bone}: the relative and absolute forms are indistinguishable on this row"
+
+
+def test_default_chest_is_c_spine3_relative_and_spine_1_is_its_65_percent():
+    """The DEFAULT's contract, in matrices, independent of the solver's
+    quaternion order and sign conventions.
+
+    spine_2: D(pelvis) . Delta(root)^-1 . Delta(37) . W_rest(spine_2) --
+    identical to the test above, because REL_TOTAL and REL_PERJOINT share
+    this chest exactly, and that identity is what carries the 28.0 deg
+    total-error result across.
+
+    spine_1: NOT an MHR row. Its world delta is the geodesic 65% of the way
+    from the pelvis's delta to the chest's, which is what makes the two
+    bones' local angles come out 65/35 on every axis.
+
+    Positive controls: rows 36 and 37 must both be visibly WRONG for
+    spine_1 here (row 36 is what the previous default used, and what a
+    careless revert would leave behind), and the interpolation must be
+    non-trivial on this row -- neither endpoint."""
+    R_pose = _rots(DEV_ROW)
+    R_rest = np.stack([_wxyz_to_mat(q) for q in load_mhr_rest()["q_wxyz"]])
+    Wr = fk_world_orientations(RIG, RIG.rest_local_q)
+    L = _solve(DEV_ROW, R_pose)
+    W = _world(L)
+    D_pelvis = _wxyz_to_mat(L[I["pelvis"]]) @ _wxyz_to_mat(Wr[I["pelvis"]]).T
+    root = R_pose[1] @ R_rest[1].T
+
+    got2 = _wxyz_to_mat(W[I["spine_2"]])
+    want2 = (D_pelvis @ root.T @ (R_pose[MHR_SPINE3] @ R_rest[MHR_SPINE3].T)
+             @ _wxyz_to_mat(Wr[I["spine_2"]]))
+    assert np.abs(got2 - want2).max() < 1e-6, "the chest is not row 37, pelvis-relative"
+
+    D_chest = got2 @ _wxyz_to_mat(Wr[I["spine_2"]]).T
+    want1 = _wxyz_to_mat(PG._slerp(QM.from_matrix(D_pelvis), QM.from_matrix(D_chest),
+                                   PG._SPINE1_SHARE)) @ _wxyz_to_mat(Wr[I["spine_1"]])
+    got1 = _wxyz_to_mat(W[I["spine_1"]])
+    assert np.abs(got1 - want1).max() < 1e-6, "spine_1 is not the 65% geodesic"
+    for other in (MHR_SPINE2, MHR_SPINE3):
+        alt = (D_pelvis @ root.T @ (R_pose[other] @ R_rest[other].T)
+               @ _wxyz_to_mat(Wr[I["spine_1"]]))
+        assert np.abs(got1 - alt).max() > 1e-3, \
+            f"spine_1 is indistinguishable from MHR row {other}"
+    assert np.abs(got1 - got2).max() > 1e-3                              # not t = 1
+    assert np.abs(got1 - D_pelvis @ _wxyz_to_mat(Wr[I["spine_1"]])).max() > 1e-3   # not t = 0
 
 
 def test_spine_anchors_are_c_spine1_and_c_spine3(monkeypatch):
@@ -438,12 +490,20 @@ def test_spine_anchors_are_c_spine1_and_c_spine3(monkeypatch):
 #   model's root (up to 43.8 deg on these captures) and blames the spine for
 #   it -- it would score the default at 0.8984 while the pelvis-relative
 #   check, which is the honest one for that mapping, scores it at 0.9996.
+#
+# `rel_total` is scored against c_spine2->c_spine3 in the relative frame like
+# `rel_perjoint`, and it is NOT expected to reach that pairing's ceiling: it
+# does not drive spine_1 from row 36 at all, it interpolates 65% of the way
+# to the chest. Scoring it against the row it declines to use is the point --
+# the gap IS the cost of the distribution ruling, and pinning it here is how
+# that cost stays visible instead of being argued away in a report.
 _SPINE_EDGE_SPECS = {
     #  source          spine_1 ref row, floor,                 relative frame
     "mhr":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
     "hybrid":       (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, False),
     "v15":          (MHR_SPINE1, SPINE1_SPINE2_FLOOR, False),
     "rel_perjoint": (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True),
+    "rel_total":    (MHR_SPINE2, SPINE1_SPINE2_36_FLOOR, True),
 }
 
 
@@ -490,9 +550,32 @@ def _spine_edge_cosines(row_id, source):
 # genuinely bend, arch and laterally flex the spine, directions the original
 # six never covered at all.
 #
-# The counts are the summary: the DEFAULT mapping violates once in 32 edges;
-# the mapping v16 first shipped violates 5 times, the hybrid 5, v15 7.
+# The counts are the summary, over 34 edges (17 rows x 2) since 0693dd37
+# joined the fixture: the default (rel_total) violates 8 times, rel_perjoint
+# once, the mapping v16 first shipped 5, the hybrid 5, v15 7. The default is
+# NOT the leader on this machine-side metric and was never chosen on it --
+# see test_where_the_default_leads... below, which asserts both halves.
 _SPINE_FLOOR_VIOLATIONS = {
+    # THE DEFAULT since 2026-08-23. Its spine_2->neck row is rel_perjoint's,
+    # bit for bit -- same chest. The seven spine_1->spine_2 rows are the
+    # PRICE of the 65/35 distribution ruling, and every one of them is a row
+    # where the model bends its own mid-back well past 65% of its total
+    # (0693dd37 is the extreme: |rel(36)| 87.8 against a 66.5 total, so a
+    # 65% interpolation lands 0.7336 against a 0.9696 floor). A two-bone
+    # spine cannot both reproduce the model's intermediate joint and split
+    # the total the way Scott's rig does; he chose the split.
+    "rel_total": {
+        ("0693dd37", "spine_1->spine_2"),   # deep pike fold, 0.7336
+        ("38608eb8", "spine_1->spine_2"),   # robert-crouch, 0.8992
+        ("3b66ffdf", "spine_1->spine_2"),   # deep-forward-fold, 0.9258
+        ("4fe66c92", "spine_1->spine_2"),   # forward-fold, 0.9687
+        ("8ea93cbf", "spine_2->neck"),      # scorpion-handstand, 0.8062 -- the
+                                            # chest is rel_perjoint's, so this
+                                            # one is rel_perjoint's too
+        ("a5a0e4f1", "spine_1->spine_2"),   # inverted-tuck, 0.9323
+        ("a75968b1", "spine_1->spine_2"),   # seated-forward-fold, 0.9437
+        ("b7c95336", "spine_1->spine_2"),   # hoop-inverted, 0.9565
+    },
     "rel_perjoint": {
         ("8ea93cbf", "spine_2->neck"),      # scorpion-handstand, 0.8062
     },
@@ -542,19 +625,27 @@ def test_real_row_spine_directions_against_the_anchored_floors(source, monkeypat
 
 def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monkeypatch):
     """The machine-side comparison as an assertion rather than a number in a
-    report, INCLUDING the edge where the default does not win.
+    report, INCLUDING the two edges where the default does not win.
 
-    spine_1->spine_2: the default leads outright and sits at its ceiling.
+    spine_1->spine_2: `rel_perjoint` leads outright and sits at its ceiling,
+    because it drives spine_1 from the very row this edge is scored against.
+    The DEFAULT does not: it interpolates 65% of the way to the chest, and
+    lands 0.957 against that 0.9996. That gap is the price of the
+    distribution ruling and it is asserted, not mentioned.
+
     spine_2->neck: v15's landmark anchor (which the hybrid shares) has the
-    better MEAN, 0.8700 against 0.8505 -- and the worse tail, min 0.7793
+    better MEAN, 0.8746 against 0.8515 -- and the worse tail, min 0.7793
     against 0.8062, which is why it violates the floor five times and the
-    default once. Both facts are asserted; the default was chosen on the
-    total chest-vs-pelvis error against the spine-zeroed captures (28.0 deg
-    vs 39.3), not on this metric, and hiding this one would misrepresent it.
+    two relative mappings once each.
+
+    The default was chosen on the total chest-vs-pelvis error against the
+    spine-zeroed captures (28.0 deg vs 39.3) and then on Scott's own 65/35
+    rig convention -- never on this metric. Hiding either loss would
+    misrepresent that.
 
     Not a tautology -- `mhr` and `rel_perjoint` transfer the SAME row 37 to
     spine_2 and score identically here once each is measured in its own
-    frame."""
+    frame, and `rel_total` joins them."""
     stats = {}
     for source in sorted(_SPINE_EDGE_SPECS):
         monkeypatch.setattr(PG, "SPINE_SOURCE", source)
@@ -567,6 +658,9 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
     lead = max(stats, key=lambda s: stats[s]["spine_1->spine_2"][0])
     assert lead == "rel_perjoint", f"{lead} leads spine_1->spine_2: {stats}"
     assert stats["rel_perjoint"]["spine_1->spine_2"][0] > 0.999      # measured 0.9996
+    # The default's cost on that edge, pinned. It is not the leader here.
+    assert stats["rel_total"]["spine_1->spine_2"][0] == pytest.approx(0.957, abs=0.005)
+    assert stats["rel_total"]["spine_1->spine_2"][1] == pytest.approx(0.734, abs=0.005)
 
     # spine_2->neck: better mean for the landmark anchor, worse worst case.
     assert stats["v15"]["spine_2->neck"][0] > stats["rel_perjoint"]["spine_2->neck"][0]
@@ -577,6 +671,11 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
     # quaternion composition orders (measured 1.05e-06 apart).
     assert stats["mhr"]["spine_2->neck"] == pytest.approx(
         stats["rel_perjoint"]["spine_2->neck"], abs=1e-5)
+    # rel_total's chest IS rel_perjoint's, from one expression in the solver,
+    # so this edge is the same quantity -- read off FK POSITIONS whose
+    # accumulation differs upstream at spine_1, hence 1e-12 and not exact.
+    assert stats["rel_total"]["spine_2->neck"] == pytest.approx(
+        stats["rel_perjoint"]["spine_2->neck"], abs=1e-12)
     # v15 and hybrid share spine_2's anchor by construction, so this edge is
     # the same quantity in both -- but it is read off FK POSITIONS whose
     # accumulation differs upstream at spine_1, which lands one ULP apart.
@@ -584,9 +683,9 @@ def test_where_the_default_leads_on_the_machine_side_and_where_it_does_not(monke
         stats["hybrid"]["spine_2->neck"], abs=1e-12)
 
 
-def test_the_four_mappings_are_not_the_same_measurement(monkeypatch):
+def test_the_five_mappings_are_not_the_same_measurement(monkeypatch):
     """Positive control for the parametrised test above: the pinned
-    violation sets must come from four genuinely different solves, not from
+    violation sets must come from five genuinely different solves, not from
     a monkeypatch that silently failed to take. On one row, the underlying
     cosines must all differ."""
     row = DEV_ROW
@@ -595,14 +694,17 @@ def test_the_four_mappings_are_not_the_same_measurement(monkeypatch):
         monkeypatch.setattr(PG, "SPINE_SOURCE", source)
         got[source] = {k: round(v[0], 4) for k, v in _spine_edge_cosines(row, source).items()}
     pairs = [(a, b) for a in got for b in got if a < b]
-    assert len(pairs) == 6                                        # positive control
+    assert len(pairs) == 10                                       # positive control
     for a, b in pairs:
         assert got[a] != got[b], f"{a} and {b} measure identically: {got[a]}"
-    # spine_2's anchor is shared by hybrid and v15 by construction, so its
-    # edge must MATCH there while spine_1's must not -- the sharpest
-    # statement available that the switch moves exactly what it claims to.
-    assert got["hybrid"]["spine_2->neck"] == got["v15"]["spine_2->neck"], got
-    assert got["hybrid"]["spine_1->spine_2"] != got["v15"]["spine_1->spine_2"], got
+    # TWO pairs share spine_2's anchor by construction -- hybrid with v15
+    # (both keep v15's landmark chest) and rel_total with rel_perjoint (both
+    # take the same root-relative row 37) -- so that edge must MATCH within
+    # each pair while spine_1's must not. The sharpest statement available
+    # that the switch moves exactly what it claims to, and nothing further.
+    for a, b in (("hybrid", "v15"), ("rel_perjoint", "rel_total")):
+        assert got[a]["spine_2->neck"] == got[b]["spine_2->neck"], got
+        assert got[a]["spine_1->spine_2"] != got[b]["spine_1->spine_2"], got
 
 
 # Every solved bone whose LOCAL legitimately differs between the two spine
