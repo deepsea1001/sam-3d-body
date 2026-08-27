@@ -565,6 +565,17 @@ PELVIS_SOURCE = PELVIS_SOURCE_NPZ_ROOT
 
 _PELVIS_SOURCES = frozenset({PELVIS_SOURCE_HIPS, PELVIS_SOURCE_NPZ_ROOT})
 
+# The four parts of the solve v18 moved onto the model's own rotations, and the
+# vocabulary of the `modelDriven` payload key. Each is reported only when its
+# model-driven branch ACTUALLY executed -- never when `mhr_rots` merely arrived.
+# Two of them are compound (`clavicles` and `neck` also need the spine_2 anchor;
+# the spine's relative sources also need the pelvis anchor), so "the blob was
+# present" and "the model drove this bone" are genuinely different claims. An
+# empty list is the honest report for a row with no blob: full keypoint
+# fallback, which the wire could not previously distinguish from a model-driven
+# pose. Order here is the order reported. See test_model_driven.py.
+MODEL_DRIVEN_GATES = ("pelvis", "spine", "clavicles", "neck")
+
 
 def _mhr_delta_q(mhr_rots: np.ndarray, row: int) -> np.ndarray:
     """World rotation delta for MHR skeleton *row*, as [w,x,y,z].
@@ -1079,7 +1090,8 @@ def _try_ankle_delta(rig: Rig, targets: dict, Wr: dict, D: dict, n: int):
 
 
 def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
-                   mhr_rots: np.ndarray | None = None) -> dict[int, np.ndarray]:
+                   mhr_rots: np.ndarray | None = None,
+                   fired: set | None = None) -> dict[int, np.ndarray]:
     """World deltas for the anchored bones: pelvis (hip frame), the four limb
     chains (bend-plane hinge), the head (nose + eye line) and the two spine
     bones. Facing and twist become constraints here; the generic per-bone
@@ -1087,10 +1099,20 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
 
     *mhr_rots*, when given, is a (127,3,3) `joint_global_rots` array
     (`mhr_rots_from_npz`) and drives the spine directly -- see the spine
-    block below. None keeps the v15 construction, for rows with no blob."""
+    block below. None keeps the v15 construction, for rows with no blob.
+
+    *fired*, when given, is a set this function ADDS to, one entry per
+    `MODEL_DRIVEN_GATES` name whose model-driven branch actually ran. It is
+    recorded at the assignment sites rather than at the `mhr_rots` check on
+    purpose: several of these gates are compound, so a gate can be offered the
+    model's rotations and still not use them."""
     li = rig.index_of_name
     rest = rig.rest_world_p
     A: dict[int, np.ndarray] = {}
+    # Discarded when the caller wants no record, so the `fired.add` sites below
+    # stay unconditional and cannot drift from the branches they sit in.
+    if fired is None:
+        fired = set()
 
     # A row with no `mhr_params_npz` blob has no root rotation to read, so it
     # takes the hip-line construction whatever the switch says -- resolved
@@ -1107,6 +1129,7 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
         # The model's own root rotation, as a rig-frame world delta. The
         # pelvis ORIENTATION only; its POSITION stays where ruling 10 put it.
         A[li["pelvis"]] = _mhr_delta_q(mhr_rots, _MHR_ROOT)
+        fired.add("pelvis")
     elif all(k in targets for k in (li["left_hip"], li["right_hip"], li["spine_1"])):
         fr = _orthonormal_frame_from_hips_and_up(
             rest, li["left_hip"], li["right_hip"], li["spine_1"])
@@ -1252,6 +1275,7 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                 A[pv0], QuaternionMath.multiply(root_d,
                                                 _mhr_delta_q(mhr_rots, _MHR_SPINE_2)))
         A[s2] = chest
+        fired.add("spine")
         if source == SPINE_SOURCE_REL_PERJOINT:
             # spine_1 takes its OWN MHR row, c_spine2. Faithful to the
             # model's intermediate joint -- and exactly what breaks when
@@ -1291,6 +1315,7 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
         # function reads `A[s2]` either way and needs no branch of its own.
         A[li["spine_1"]] = _mhr_delta_q(mhr_rots, _MHR_SPINE_1)
         A[s2] = _mhr_delta_q(mhr_rots, _MHR_SPINE_2)
+        fired.add("spine")
     else:
         # v15's chest anchor, shared by SPINE_SOURCE_V15 and
         # SPINE_SOURCE_HYBRID. Built from OBSERVABLE landmarks -- the neck
@@ -1320,6 +1345,8 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             # 65% share is a CONSTANT where a real per-pose rotation can
             # express a distribution that varies pose to pose.
             A[li["spine_1"]] = _mhr_delta_q(mhr_rots, _MHR_SPINE_1_HYBRID)
+            # spine_2 here is the LANDMARK anchor; only spine_1 is the model's.
+            fired.add("spine")
         # Spine flexion (Scott 2026-08-21: "stiff as a board"). Two separable
         # halves, and this code deliberately keeps them separable: WHAT the
         # total pelvis->chest rotation is, and HOW it is distributed across
@@ -1458,6 +1485,11 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
                 continue
             rel = QuaternionMath.multiply(chest_inv, _mhr_delta_q(mhr_rots, row))
             A[ci] = QuaternionMath.multiply(A[s2], _swing_about(rel, axis))
+            # Inside the loop and BELOW both `continue`s: a side whose long
+            # axis is undefined took the aim path, and must not be reported.
+            # One entry covers both sides -- the payload vocabulary is flat,
+            # so this reads "at least one clavicle took the model's rotation".
+            fired.add("clavicles")
             # ...then aim what that produced back at the shoulder keypoint,
             # by at most _CLAV_AIM_CORRECTION_MAX_DEG -- see that constant for
             # what the residual was measured to BE (a near-constant per-side
@@ -1541,6 +1573,7 @@ def _anchor_deltas(rig: Rig, targets: dict[int, np.ndarray], Wr: dict,
             A[nk] = QuaternionMath.multiply(A[s2], QuaternionMath.multiply(
                 QuaternionMath.conjugate(_mhr_delta_q(mhr_rots, _MHR_SPINE_2)),
                 _mhr_delta_q(mhr_rots, _spine_column()["neck_row"])))
+            fired.add("neck")
         elif hi in A:
             # No rotations: the v15 Y-twist half-bridge, bit-identical.
             r_ln = QuaternionMath.multiply(
@@ -1932,7 +1965,8 @@ def solved_indices(rig: Rig, mhr_rots: np.ndarray | None = None) -> list:
 
 
 def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
-                     mhr_rots: np.ndarray | None = None) -> dict[int, np.ndarray]:
+                     mhr_rots: np.ndarray | None = None,
+                     fired: set | None = None) -> dict[int, np.ndarray]:
     """Solve absolute local quaternions posing the rig onto *targets*.
 
     Per bone, a world DELTA D(b) rotates the rig's rest bone directions onto
@@ -1987,7 +2021,7 @@ def solve_rig_locals(rig: Rig, targets: dict[int, np.ndarray],
     # Anchored bones get exact frame deltas (facing and hinge twist are
     # constraints there); everything else falls through to the generic
     # child-direction solve below. See _anchor_deltas.
-    anchors = _anchor_deltas(rig, targets, Wr, mhr_rots)
+    anchors = _anchor_deltas(rig, targets, Wr, mhr_rots, fired=fired)
     D: dict = {}
     for n in aim:
         if n in anchors:
@@ -2248,7 +2282,8 @@ def rig_state_from_mhr70(kp_cam: np.ndarray, mhr_rots: np.ndarray | None = None)
     # index-keyed, the SOLVED bones per solved_indices' own contract -- 34
     # without mhr_rots, up to 64 (34 + the phalanges of every digit that
     # passes its integrity gate) with it (ruling 7)
-    solved = solve_rig_locals(rig, targets, mhr_rots)
+    fired: set = set()
+    solved = solve_rig_locals(rig, targets, mhr_rots, fired=fired)
 
     if ROOT_DISPLAY_YAW_DEG:
         t = np.radians(ROOT_DISPLAY_YAW_DEG)
@@ -2351,6 +2386,12 @@ def rig_state_from_mhr70(kp_cam: np.ndarray, mhr_rots: np.ndarray | None = None)
         "cameraState": MannequinExporter.get_default_camera_state(),
         "rigVersion": rig.version,
         "retargetVersion": 18,
+        # Which gates the MODEL actually drove, in MODEL_DRIVEN_GATES order.
+        # Empty means full keypoint fallback -- the state a row with no
+        # `mhr_params_npz` blob has always been in, and could not report.
+        # Additive, so `retargetVersion` stays 18: the algorithm is unchanged,
+        # only what it says about itself.
+        "modelDriven": [g for g in MODEL_DRIVEN_GATES if g in fired],
     }
     _assert_all_finite(state)   # belt: no non-finite value reaches the wire, regardless of cause
     return state
