@@ -156,6 +156,28 @@ def test_control_the_compound_gates_narrow_when_the_spine_2_anchor_is_absent(
     assert "pelvis" in fired, "the pelvis gate reads neither spine_2 nor targets"
 
 
+def test_control_a_partial_fire_survives_to_the_payload(monkeypatch):
+    """The gap the two controls above leave open, and the one that matters.
+
+    They call `_anchor_deltas` DIRECTLY, so they pin the gate sites and nothing
+    else; every other test here feeds a full npz or None, which exercises only
+    the payload's two extremes. Between the gates and the field sits the
+    threading -- `fired` through `solve_rig_locals` into `rig_state_from_mhr70`
+    -- and none of that was covered for a PARTIAL result.
+
+    So the hardcode the other controls kill at the gates survives one layer up:
+    replace the emission with `list(MODEL_DRIVEN_GATES) if mhr_rots is not None
+    else []` and every other test in this file still passes. This one does not,
+    because `mhr_rots` is fully present while the spine gate does not run --
+    supplied and fired disagree, at the only layer the site consumes.
+    """
+    monkeypatch.setattr(PG, "SPINE_SOURCE", PG.SPINE_SOURCE_V15)
+    got = rig_state_from_mhr70(_kp(DEV_ROW), _rots(DEV_ROW))["modelDriven"]
+
+    assert "spine" not in got
+    assert {"pelvis", "clavicles", "neck"} <= set(got)
+
+
 def test_control_the_field_is_not_a_constant():
     """The three controls above must disagree with the full-set row."""
     full = set(rig_state_from_mhr70(_kp(DEV_ROW), _rots(DEV_ROW))["modelDriven"])
