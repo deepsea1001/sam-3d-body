@@ -58,6 +58,21 @@ class BaseRetargeter(ABC):
         """
         pass
 
+    def get_pass_through_joints(self) -> frozenset:
+        """Joints that stay in the hierarchy but contribute no rotation.
+
+        A pass-through inherits its parent's world frame, so its own local is
+        exactly identity and its CHILDREN's locals come out relative to its
+        parent. Use it where the target skeleton has no bone to receive the
+        joint's rotation: an exporter that drops the joint then drops an
+        identity, which is lossless, instead of dropping real rotation and
+        leaving the children expressed in a frame the payload never carries.
+
+        Returns:
+            Frozenset of joint names. Empty by default.
+        """
+        return frozenset()
+
     @abstractmethod
     def get_children_map(self) -> Dict[str, List[str]]:
         """Get mapping from joint to its children.
@@ -130,8 +145,20 @@ class BaseRetargeter(ABC):
 
         children_map = self.get_children_map()
         hierarchy = self.get_hierarchy()
+        pass_through = self.get_pass_through_joints()
 
         for joint_name, parent_name in hierarchy:
+            # A pass-through contributes no rotation: it takes its parent's
+            # world frame verbatim, so its local is identity and its children
+            # are solved relative to its parent. See get_pass_through_joints.
+            if joint_name in pass_through:
+                rotations[joint_name] = QuaternionMath.identity()
+                scales[joint_name] = 1.0
+                world_rotations[joint_name] = world_rotations.get(
+                    parent_name, QuaternionMath.identity()
+                )
+                continue
+
             # Get first child to determine bone direction
             children = children_map.get(joint_name, [])
             first_child = children[0] if children else None

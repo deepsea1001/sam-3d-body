@@ -156,6 +156,23 @@ class MHR70Retargeter(BaseRetargeter):
         """Get mapping from joint to its children."""
         return self._children_map
 
+    def get_pass_through_joints(self) -> frozenset:
+        """The acromia carry no rotation the mannequin can receive.
+
+        `MHR70_TO_MANNEQUIN` maps both acromia to None because the mannequin
+        skeleton wires the girdle `clavicle -> shoulder` direct. Solving them
+        as ordinary joints put the shoulder's local in a frame the payload
+        never carries, so the exporter's skip silently cost a MEDIAN ~95 deg
+        (see test_acromion_passthrough.py). As pass-throughs their local is
+        identity and the shoulder comes out clavicle-relative, so the skip is
+        lossless and the shoulder's world orientation is unchanged.
+
+        The joints stay in the hierarchy: keypoints 67/68 still place them, and
+        the acromion POSITION is the usable scapula signal. Only the artifact
+        rotation fitted to the short, noisy acromion->shoulder segment goes.
+        """
+        return frozenset({"left_acromion", "right_acromion"})
+
     def compute_joint_positions(
         self, keypoints_3d: np.ndarray
     ) -> Dict[str, np.ndarray]:
