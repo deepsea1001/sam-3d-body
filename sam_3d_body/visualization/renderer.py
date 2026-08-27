@@ -2,7 +2,8 @@
 
 import os
 
-if "PYOPENGL_PLATFORM" not in os.environ:
+import platform
+if "PYOPENGL_PLATFORM" not in os.environ and platform.system() != "Darwin":
     os.environ["PYOPENGL_PLATFORM"] = "egl"
 from typing import List, Optional
 

@@ -11,13 +11,28 @@ root = pyrootutils.setup_root(
     pythonpath=True,
     dotenv=True,
 )
-
+import time
 import cv2
 import numpy as np
 import torch
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
-from tools.vis_utils import visualize_sample, visualize_sample_together
+from tools.vis_utils import visualize_sample, visualize_sample_together, visualize_debug_detections
+from tools.json_export import export_from_pipeline_outputs
 from tqdm import tqdm
+
+
+def resize_image(img, max_size):
+    """Resize image so longest dimension equals max_size, preserving aspect ratio."""
+    h, w = img.shape[:2]
+    if max(h, w) <= max_size:
+        return img
+    if h > w:
+        new_h = max_size
+        new_w = int(w * max_size / h)
+    else:
+        new_w = max_size
+        new_h = int(h * max_size / w)
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
 def main(args):
@@ -34,8 +49,27 @@ def main(args):
     segmentor_path = args.segmentor_path or os.environ.get("SAM3D_SEGMENTOR_PATH", "")
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", "")
 
+    # Initialize Skeleton Exporter
+    exporter = None
+    if args.export_skeleton:
+        from tools.export_utils import SkeletonExporter
+        exporter = SkeletonExporter(output_folder)
+    elif args.export_glb:
+        from tools.gltf_export_utils import GLBExporter
+        exporter = GLBExporter()
+
+    # Collect outputs for FBX export
+    fbx_frame_outputs = [] if args.export_fbx else None
+
     # Initialize sam-3d-body model and other optional modules
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
+
     model, model_cfg = load_sam_3d_body(
         args.checkpoint_path, device=device, mhr_path=mhr_path
     )
@@ -84,18 +118,94 @@ def main(args):
         ]
     )
 
-    for image_path in tqdm(images_list):
+    pbar = tqdm(images_list)
+    for image_path in pbar:
+        pbar.set_description(f"Processing {os.path.basename(image_path)}")
+        start_time = time.time()
+
+        # Load and optionally resize image
+        img = cv2.imread(image_path)
+        if args.resize > 0:
+            orig_h, orig_w = img.shape[:2]
+            img = resize_image(img, args.resize)
+            if img.shape[:2] != (orig_h, orig_w):
+                tqdm.write(f"[RESIZE] {os.path.basename(image_path)}: {orig_w}x{orig_h} -> {img.shape[1]}x{img.shape[0]}")
+
+        # Convert BGR to RGB for process_one_image (expects RGB when given numpy array)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
         outputs = estimator.process_one_image(
-            image_path,
+            img_rgb,
             bbox_thr=args.bbox_thresh,
+            mask_thr=args.mask_thresh,
             use_mask=args.use_mask,
+            det_prompt=args.det_prompt,
         )
 
-        img = cv2.imread(image_path)
-        rend_img = visualize_sample_together(img, outputs, estimator.faces)
-        cv2.imwrite(
-            f"{output_folder}/{os.path.basename(image_path)[:-4]}.jpg",
-            rend_img.astype(np.uint8),
+        # Export Skeleton Data
+        if exporter is not None:
+             exporter.add_frame(outputs)
+
+        # Collect for FBX export
+        if fbx_frame_outputs is not None and outputs:
+            fbx_frame_outputs.append(outputs)
+
+        duration = time.time() - start_time
+        pbar.set_postfix(time=f"{duration:.2f}s")
+
+        if args.debug:
+            tqdm.write(f"[DEBUG] {os.path.basename(image_path)}: {duration:.3f}s, found {len(outputs)} humans")
+
+        vis_images = visualize_sample_together(img, outputs, estimator.faces)
+        
+        base_name = os.path.basename(image_path)[:-4]
+        for suffix, vis_img in vis_images.items():
+            cv2.imwrite(
+                f"{output_folder}/{base_name}_{suffix}.jpg",
+                vis_img.astype(np.uint8),
+            )
+
+        if args.debug:
+            debug_img = visualize_debug_detections(img, outputs)
+            cv2.imwrite(
+                f"{output_folder}/{os.path.basename(image_path)[:-4]}_debug.jpg",
+                debug_img.astype(np.uint8),
+            )
+
+        # Export JSON for web viewer (one file per image)
+        if args.export_json and outputs:
+            json_path = f"{output_folder}/{base_name}_skeleton.json"
+            export_from_pipeline_outputs(outputs, json_path, os.path.basename(image_path))
+
+    if exporter is not None:
+        if args.export_glb:
+            exporter.save(os.path.join(output_folder, "skeleton_anim.glb"))
+        else:
+            exporter.save_motion("skeleton_motion.npz")
+
+    # Export FBX
+    if fbx_frame_outputs:
+        from tools.fbx_export import export_fbx
+        fbx_path = os.path.join(output_folder, "skeleton.fbx")
+        bind_pose_path = args.fbx_bind_pose if args.fbx_bind_pose else None
+
+        # Use default bind pose if mode is 'bind' but no path specified
+        if args.fbx_rotation_mode == "bind" and not bind_pose_path:
+            default_bind = os.path.join(root, "data/bind_poses/default_human.json")
+            if os.path.exists(default_bind):
+                bind_pose_path = default_bind
+            else:
+                print(f"Warning: bind mode requires --fbx_bind_pose, using absolute mode")
+                args.fbx_rotation_mode = "absolute"
+
+        export_fbx(
+            fbx_frame_outputs,
+            fbx_path,
+            include_mesh=args.export_fbx_mesh,
+            rotation_mode=args.fbx_rotation_mode,
+            bind_pose_path=bind_pose_path,
+            fps=args.fbx_fps,
+            faces=estimator.faces,
         )
 
 
@@ -176,15 +286,83 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--bbox_thresh",
-        default=0.8,
+        default=0.3,
         type=float,
         help="Bounding box detection threshold",
+    )
+    parser.add_argument(
+        "--mask_thresh",
+        default=0.3,
+        type=float,
+        help="Mask/segmentation confidence threshold (SAM3 segmentor only)",
     )
     parser.add_argument(
         "--use_mask",
         action="store_true",
         default=False,
         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Visualize bboxes and masks for debugging",
+    )
+    parser.add_argument(
+        "--det_prompt",
+        type=str,
+        default="person",
+        help="Text prompt for human detection (e.g. 'person')",
+    )
+    parser.add_argument(
+        "--export_skeleton",
+        action="store_true",
+        help="Export detected 3D skeletons to .npz for animation",
+    )
+    parser.add_argument(
+        "--export_glb",
+        action="store_true",
+        help="Export detected 3D skeletons to .glb (Binary GLTF) for animation",
+    )
+    parser.add_argument(
+        "--export_json",
+        action="store_true",
+        help="Export 3D skeletons to JSON for web viewer (one file per image)",
+    )
+    parser.add_argument(
+        "--export_fbx",
+        action="store_true",
+        help="Export FBX skeleton for Maya/DCC tools",
+    )
+    parser.add_argument(
+        "--export_fbx_mesh",
+        action="store_true",
+        help="Include mesh in FBX export",
+    )
+    parser.add_argument(
+        "--fbx_fps",
+        type=int,
+        default=24,
+        help="Frame rate for FBX animation (default: 24)",
+    )
+    parser.add_argument(
+        "--fbx_rotation_mode",
+        type=str,
+        default="absolute",
+        choices=["absolute", "relative", "bind"],
+        help="Rotation mode: absolute (world-space), relative (to first frame), bind (to bind pose)",
+    )
+    parser.add_argument(
+        "--fbx_bind_pose",
+        type=str,
+        default="",
+        help="Path to bind pose JSON (required if rotation_mode=bind)",
+    )
+    parser.add_argument(
+        "--resize",
+        type=int,
+        default=0,
+        help="Resize images so longest dimension equals this value before processing (0 to disable, e.g., --resize 1024)",
     )
     args = parser.parse_args()
 

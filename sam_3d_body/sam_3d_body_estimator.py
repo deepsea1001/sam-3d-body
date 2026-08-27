@@ -70,7 +70,9 @@ class SAM3DBodyEstimator:
         det_cat_id: int = 0,
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
+        mask_thr: float = 0.3,
         use_mask: bool = False,
+        det_prompt: Optional[str] = None,
         inference_type: str = "full",
     ):
         """
@@ -83,6 +85,7 @@ class SAM3DBodyEstimator:
             det_cat_id: Detection category ID
             bbox_thr: Bounding box threshold
             nms_thr: NMS threshold
+            mask_thr: Mask/segmentation confidence threshold (SAM3 only)
             inference_type:
                 - full: full-body inference with both body and hand decoders
                 - body: inference with body decoder only (still full-body output)
@@ -94,7 +97,10 @@ class SAM3DBodyEstimator:
         self.image_embeddings = None
         self.output = None
         self.prev_prompt = []
-        torch.cuda.empty_cache()
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        elif self.device.type == "mps":
+            torch.mps.empty_cache()
 
         if type(img) == str:
             img = load_image(img, backend="cv2", image_format="bgr")
@@ -106,23 +112,27 @@ class SAM3DBodyEstimator:
 
         if bboxes is not None:
             boxes = bboxes.reshape(-1, 4)
+            # External boxes carry no detector confidence; downstream output
+            # falls back to 1.0 when scores is None.
+            scores = None
             self.is_crop = True
         elif self.detector is not None:
             if image_format == "rgb":
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 image_format = "bgr"
             print("Running object detector...")
-            boxes = self.detector.run_human_detection(
+            boxes, scores = self.detector.run_human_detection(
                 img,
-                det_cat_id=det_cat_id,
                 bbox_thr=bbox_thr,
-                nms_thr=nms_thr,
-                default_to_full_image=False,
+                det_prompt=det_prompt,
             )
-            print("Found boxes:", boxes)
+            print(f"Found {len(boxes)} boxes.")
+            for i, score in enumerate(scores):
+                print(f"  - Box {i}: confidence {score:.4f}")
             self.is_crop = True
         else:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
+            scores = np.array([1.0])
             self.is_crop = False
 
         # If there are no detected humans, don't run prediction
@@ -148,8 +158,14 @@ class SAM3DBodyEstimator:
             use_mask = True
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
-            # Generate masks using SAM2
-            masks, masks_score = self.sam.run_sam(img, boxes)
+            # Generate masks using SAM2/SAM3
+            masks, masks_score = self.sam.run_sam(img, boxes, det_prompt=det_prompt, mask_thr=mask_thr)
+            print(f"Generated {len(masks)} masks.")
+            for i, score in enumerate(masks_score):
+                print(f"  - Mask {i}: confidence {score:.4f}")
+            if len(masks) != len(boxes):
+                print(f"  Warning: mask count ({len(masks)}) != box count ({len(boxes)}). "
+                      f"Some detections will not have masks.")
         else:
             masks, masks_score = None, None
 
@@ -157,7 +173,7 @@ class SAM3DBodyEstimator:
         batch = prepare_batch(img, self.transform, boxes, masks, masks_score)
 
         #################### Run model inference on an image ####################
-        batch = recursive_to(batch, "cuda")
+        batch = recursive_to(batch, self.device)
         self.model._initialize_batch(batch)
 
         # Handle camera intrinsics
@@ -208,7 +224,10 @@ class SAM3DBodyEstimator:
                     "scale_params": out["scale"][idx],
                     "shape_params": out["shape"][idx],
                     "expr_params": out["face"][idx],
-                    "mask": masks[idx] if masks is not None else None,
+                    "mask": masks[idx] if masks is not None and idx < len(masks) else None,
+                    "bbox_score": scores[idx] if scores is not None else 1.0,
+                    "mask_score": masks_score[idx] if masks_score is not None and idx < len(masks_score) else None,
+                    "det_score": masks_score[idx] if masks_score is not None and idx < len(masks_score) else scores[idx] if scores is not None else 1.0,
                     "pred_joint_coords": out["pred_joint_coords"][idx],
                     "pred_global_rots": out["joint_global_rots"][idx],
                     "mhr_model_params": out["mhr_model_params"][idx],

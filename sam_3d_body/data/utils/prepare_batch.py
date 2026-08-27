@@ -28,7 +28,7 @@ def prepare_batch(
         data_info["bbox"] = boxes[idx]  # shape (4,)
         data_info["bbox_format"] = "xyxy"
 
-        if masks is not None:
+        if masks is not None and idx < len(masks):
             data_info["mask"] = masks[idx].copy()
             if masks_score is not None:
                 data_info["mask_score"] = masks_score[idx]
@@ -72,6 +72,7 @@ def prepare_batch(
                     [0, 0, 1],
                 ]
             ],
+            dtype=torch.float32
         ).to(batch["img"])
 
     batch["img_ori"] = [NoCollate(img)]

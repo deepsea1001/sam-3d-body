@@ -1,0 +1,253 @@
+{
+ "version": 1,
+ "provenance": {
+  "hand_poses": "../poseGoblin/poses/hand_poses.json",
+  "reference_pose": "Fist",
+  "rig_asset": "bind_poses/posegoblin_rig_v2.json",
+  "rig_version": "posegoblin_rig_v2",
+  "extracted": "2026-08-22"
+ },
+ "convention": "axis is a UNIT vector in the bone's OWN REST-LOCAL frame; posed_local = rest_local_q o quat(axis, theta), quaternions [w,x,y,z]. theta=0 is the rig's rest, theta=fist_angle_deg is the stored Fist preset.",
+ "bones": {
+  "left_thumb_1": {
+   "axis": [
+    0.614833176,
+    0.619050519,
+    -0.488627283
+   ],
+   "fist_angle_deg": 42.082958
+  },
+  "right_thumb_1": {
+   "axis": [
+    0.614833176,
+    0.619050519,
+    -0.488627283
+   ],
+   "fist_angle_deg": 42.082958
+  },
+  "left_thumb_2": {
+   "axis": [
+    -0.730331503,
+    -0.122057324,
+    -0.672099624
+   ],
+   "fist_angle_deg": 19.212588
+  },
+  "right_thumb_2": {
+   "axis": [
+    -0.730331503,
+    -0.122057324,
+    -0.672099624
+   ],
+   "fist_angle_deg": 19.212588
+  },
+  "left_thumb_3": {
+   "axis": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "fist_angle_deg": 67.026221
+  },
+  "right_thumb_3": {
+   "axis": [
+    -0.0,
+    -0.0,
+    -1.0
+   ],
+   "fist_angle_deg": 67.026221
+  },
+  "left_index_finger_1": {
+   "axis": [
+    0.990133466,
+    -0.008728837,
+    -0.13985538
+   ],
+   "fist_angle_deg": 68.434167
+  },
+  "right_index_finger_1": {
+   "axis": [
+    0.990133466,
+    -0.008728837,
+    -0.13985538
+   ],
+   "fist_angle_deg": 68.434167
+  },
+  "left_index_finger_2": {
+   "axis": [
+    1.0,
+    -4e-09,
+    5e-09
+   ],
+   "fist_angle_deg": 107.990872
+  },
+  "right_index_finger_2": {
+   "axis": [
+    1.0,
+    -4e-09,
+    5e-09
+   ],
+   "fist_angle_deg": 107.990872
+  },
+  "left_index_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 90.613951
+  },
+  "right_index_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 90.613951
+  },
+  "left_middle_finger_1": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 85.904563
+  },
+  "right_middle_finger_1": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 85.904563
+  },
+  "left_middle_finger_2": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 104.597522
+  },
+  "right_middle_finger_2": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 104.597484
+  },
+  "left_middle_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 83.890893
+  },
+  "right_middle_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 83.890757
+  },
+  "left_ring_finger_1": {
+   "axis": [
+    0.981424847,
+    -0.185296558,
+    0.049703673
+   ],
+   "fist_angle_deg": 98.576505
+  },
+  "right_ring_finger_1": {
+   "axis": [
+    0.981424847,
+    -0.185296558,
+    0.049703673
+   ],
+   "fist_angle_deg": 98.576505
+  },
+  "left_ring_finger_2": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 101.516659
+  },
+  "right_ring_finger_2": {
+   "axis": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "fist_angle_deg": 101.516658
+  },
+  "left_ring_finger_3": {
+   "axis": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "fist_angle_deg": 85.338176
+  },
+  "right_ring_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 85.3381
+  },
+  "left_pinky_finger_1": {
+   "axis": [
+    0.955785371,
+    -0.220847486,
+    0.194166716
+   ],
+   "fist_angle_deg": 92.493218
+  },
+  "right_pinky_finger_1": {
+   "axis": [
+    0.955785371,
+    -0.220847486,
+    0.194166716
+   ],
+   "fist_angle_deg": 92.493218
+  },
+  "left_pinky_finger_2": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 102.971527
+  },
+  "right_pinky_finger_2": {
+   "axis": [
+    1.0,
+    -0.0,
+    -0.0
+   ],
+   "fist_angle_deg": 102.971527
+  },
+  "left_pinky_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 76.127493
+  },
+  "right_pinky_finger_3": {
+   "axis": [
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "fist_angle_deg": 76.127493
+  }
+ }
+}

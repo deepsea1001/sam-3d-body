@@ -7,7 +7,14 @@ from .utils.config import get_config
 from .utils.checkpoint import load_state_dict
 
 
-def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: str = ""):
+def load_sam_3d_body(checkpoint_path: str = "", device: str = None, mhr_path: str = ""):
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
     print("Loading SAM 3D Body model...")
     
     # Check the current directory, and if not present check the parent dir.

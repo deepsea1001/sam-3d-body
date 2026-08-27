@@ -4,7 +4,14 @@ import torch
 
 
 class FOVEstimator:
-    def __init__(self, name="moge2", device="cuda", **kwargs):
+    def __init__(self, name="moge2", device=None, **kwargs):
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.device = device
 
         if name == "moge2":
@@ -70,6 +77,7 @@ def denormalize_f(norm_K, height, width):
 
     # Construct absolute K matrix
     abs_K = torch.tensor(
-        [[fx_abs, s_abs, cx_abs], [0.0, fy_abs, cy_abs], [0.0, 0.0, 1.0]]
+        [[fx_abs, s_abs, cx_abs], [0.0, fy_abs, cy_abs], [0.0, 0.0, 1.0]],
+        dtype=torch.float32
     )
     return abs_K
